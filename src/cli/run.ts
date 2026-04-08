@@ -1,5 +1,6 @@
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { MockModelClient } from "../adapter/pi-adapter.js";
 import { ReplayRecorder } from "../replay/recorder.js";
 import { EffectRecorder } from "../effect/recorder.js";
@@ -12,7 +13,8 @@ import { StreamEvent } from "../schemas/index.js";
  * reads tests/math.test.ts and then writes a patched version.
  */
 export async function runGoldenPath(workdir: string, outRoot: string): Promise<string> {
-  const sessionId = "golden-" + Date.now().toString(36);
+  // ms timestamp + random suffix so two runs in the same second never collide
+  const sessionId = "golden-" + Date.now().toString(36) + "-" + randomUUID().slice(0, 8);
   const sessionDir = join(outRoot, "sessions", sessionId);
   const tapePath = join(outRoot, "tapes", sessionId + ".jsonl");
   const effectLog = join(outRoot, "effects", sessionId + ".jsonl");

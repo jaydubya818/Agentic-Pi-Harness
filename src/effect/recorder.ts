@@ -31,7 +31,6 @@ async function readText(path: string): Promise<string | null> {
 }
 
 function unifiedDiff(a: string, b: string, path: string): string {
-  // Minimal: not a real diff lib. One hunk, whole-file replace.
   if (a === b) return "";
   const aLines = a.split("\n");
   const bLines = b.split("\n");
@@ -42,15 +41,22 @@ function unifiedDiff(a: string, b: string, path: string): string {
   );
 }
 
-export class EffectRecorder {
-  private pre = new Map<string, { hash: string | null; text: string | null }>();
+type PreEntry = { hash: string; text: string | null };
+
+/**
+ * Per-call scope. Caller acquires a scope before running a tool, snapshots
+ * into it, then captures. Scopes are disjoint so two concurrent calls to the
+ * same path cannot clobber each other's pre state.
+ */
+export class EffectScope {
+  private pre = new Map<string, PreEntry>();
 
   async snapshotPre(paths: string[]): Promise<void> {
     for (const p of paths) {
       try {
-        const hash = await hashFile(p);
+        const hash = (await hashFile(p)) ?? "absent";
         const text = await readText(p);
-        this.pre.set(p, { hash: hash ?? "absent", text });
+        this.pre.set(p, { hash, text });
       } catch (e) {
         throw new PiHarnessError("E_EFFECT_PRE_HASH", `pre-hash failed for ${p}`, { cause: String(e) });
       }
@@ -66,7 +72,7 @@ export class EffectRecorder {
     for (const p of paths) {
       const preEntry = this.pre.get(p) ?? { hash: "absent", text: null };
       const postHash = (await hashFile(p)) ?? "absent";
-      preHashes[p] = preEntry.hash ?? "absent";
+      preHashes[p] = preEntry.hash;
       postHashes[p] = postHash;
 
       if (preEntry.hash === postHash) continue;
@@ -91,5 +97,31 @@ export class EffectRecorder {
       rollbackConfidence: binaryChanged ? "best_effort" : "high",
       at: new Date().toISOString(),
     };
+  }
+}
+
+/**
+ * Factory that hands out per-call scopes. The old `EffectRecorder` API is
+ * kept for back-compat (golden path + tests) but `snapshotPre`/`capturePost`
+ * now go through an internal scope keyed by toolCallId, so concurrent calls
+ * to the same path are correctly isolated.
+ */
+export class EffectRecorder {
+  private scopes = new Map<string, EffectScope>();
+
+  scope(): EffectScope { return new EffectScope(); }
+
+  /** Back-compat: sequential single-call API. */
+  async snapshotPre(paths: string[], toolCallId = "__default__"): Promise<void> {
+    let s = this.scopes.get(toolCallId);
+    if (!s) { s = new EffectScope(); this.scopes.set(toolCallId, s); }
+    await s.snapshotPre(paths);
+  }
+
+  async capturePost(toolCallId: string, toolName: string, paths: string[]): Promise<EffectRecord> {
+    const s = this.scopes.get(toolCallId) ?? this.scopes.get("__default__") ?? new EffectScope();
+    const rec = await s.capturePost(toolCallId, toolName, paths);
+    this.scopes.delete(toolCallId);
+    return rec;
   }
 }

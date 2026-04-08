@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import { canonicalize } from "../schemas/canonical.js";
 
 /**
  * Tier B hook dispatcher — in-process module hooks only.
@@ -79,8 +80,9 @@ export class HookDispatcher {
 }
 
 function digest(v: unknown): string {
-  // lightweight — full canonicalization not required for audit digest
-  return "sha256:" + createHash("sha256").update(JSON.stringify(v)).digest("hex");
+  // Canonicalized so audit digests are stable across key-order / whitespace
+  // differences — same rule as the tape + policy signer.
+  return "sha256:" + createHash("sha256").update(canonicalize(v)).digest("hex");
 }
 
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
