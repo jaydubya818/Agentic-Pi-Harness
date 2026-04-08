@@ -24,14 +24,29 @@ const parse = (p) =>
 const a = parse(aPath);
 const b = parse(bPath);
 
-const key = (recs) => recs.map((r) => JSON.stringify(r.postHashes)).join("|");
+/**
+ * Determinism check: two independent runs in two different workdirs will
+ * naturally key postHashes under different absolute paths, so we compare
+ * the SORTED hash values per record (path-agnostic) plus the tool name +
+ * binaryChanged + rollbackConfidence flags.
+ */
+const sig = (recs) =>
+  recs.map((r) => JSON.stringify({
+    t: r.toolName,
+    h: Object.values(r.postHashes).sort(),
+    p: Object.values(r.preHashes).sort(),
+    b: r.binaryChanged,
+    rc: r.rollbackConfidence,
+  })).join("|");
 
 if (a.length !== b.length) {
   console.error(`replay drift: record count ${a.length} vs ${b.length}`);
   process.exit(1);
 }
-if (key(a) !== key(b)) {
-  console.error("replay drift: postHashes diverge");
+if (sig(a) !== sig(b)) {
+  console.error("replay drift: effect signatures diverge");
+  console.error("a:", sig(a));
+  console.error("b:", sig(b));
   process.exit(1);
 }
-console.log(`replay deterministic: ${a.length} effect records match`);
+console.log(`replay deterministic: ${a.length} effect records match (path-agnostic)`);
