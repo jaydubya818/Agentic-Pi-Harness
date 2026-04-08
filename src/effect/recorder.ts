@@ -30,15 +30,46 @@ async function readText(path: string): Promise<string | null> {
   }
 }
 
+/**
+ * Minimal LCS-based unified diff. Good enough for small text files; no
+ * external dependency so the harness stays self-contained. If we ever need
+ * 3-way merges or word-level diffs we'll pull in `diff`.
+ */
 function unifiedDiff(a: string, b: string, path: string): string {
   if (a === b) return "";
   const aLines = a.split("\n");
   const bLines = b.split("\n");
-  return (
-    `--- a/${path}\n+++ b/${path}\n@@ -1,${aLines.length} +1,${bLines.length} @@\n` +
-    aLines.map((l) => "-" + l).join("\n") + "\n" +
-    bLines.map((l) => "+" + l).join("\n") + "\n"
-  );
+  const ops = lcsDiff(aLines, bLines);
+  const body: string[] = [];
+  for (const op of ops) {
+    if (op.kind === "eq")  body.push(" " + op.line);
+    if (op.kind === "del") body.push("-" + op.line);
+    if (op.kind === "add") body.push("+" + op.line);
+  }
+  return `--- a/${path}\n+++ b/${path}\n@@ -1,${aLines.length} +1,${bLines.length} @@\n` +
+         body.join("\n") + "\n";
+}
+
+type DiffOp = { kind: "eq" | "del" | "add"; line: string };
+function lcsDiff(a: string[], b: string[]): DiffOp[] {
+  const n = a.length, m = b.length;
+  // LCS length table
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const ops: DiffOp[] = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j])                    { ops.push({ kind: "eq",  line: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ kind: "del", line: a[i] }); i++; }
+    else                                   { ops.push({ kind: "add", line: b[j] }); j++; }
+  }
+  while (i < n) { ops.push({ kind: "del", line: a[i++] }); }
+  while (j < m) { ops.push({ kind: "add", line: b[j++] }); }
+  return ops;
 }
 
 type PreEntry = { hash: string; text: string | null };

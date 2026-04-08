@@ -1,5 +1,6 @@
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { MockModelClient } from "../adapter/pi-adapter.js";
 import { ReplayRecorder } from "../replay/recorder.js";
@@ -12,7 +13,12 @@ import { StreamEvent } from "../schemas/index.js";
  * Golden-path runner: drives the loop with a scripted mock model that
  * reads tests/math.test.ts and then writes a patched version.
  */
-export async function runGoldenPath(workdir: string, outRoot: string): Promise<string> {
+export interface RunOptions {
+  /** If set, writes every stream event as JSONL to `<tracePath>`. */
+  tracePath?: string;
+}
+
+export async function runGoldenPath(workdir: string, outRoot: string, opts: RunOptions = {}): Promise<string> {
   // ms timestamp + random suffix so two runs in the same second never collide
   const sessionId = "golden-" + Date.now().toString(36) + "-" + randomUUID().slice(0, 8);
   const sessionDir = join(outRoot, "sessions", sessionId);
@@ -45,11 +51,13 @@ export async function runGoldenPath(workdir: string, outRoot: string): Promise<s
   const model = new MockModelClient(script);
   const effects = new EffectRecorder();
 
+  const tracePath = opts.tracePath;
   const result = await runQueryLoop({
     sessionId, model, tape, effects,
     checkpointPath: join(sessionDir, "checkpoint.json"),
     effectLogPath: effectLog,
     policyLogPath: policyLog,
+    tracePath,
     tools: {
       read_file: async (i: { path: string }) => ({
         output: await readFile(i.path, "utf8"), paths: [i.path],
@@ -79,7 +87,31 @@ export async function runGoldenPath(workdir: string, outRoot: string): Promise<s
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const workdir = process.argv[2] ?? "./.pi-work";
-  const outRoot = process.argv[3] ?? "./.pi-out";
-  runGoldenPath(workdir, outRoot).then((id) => console.log("session " + id));
+  // argv: [node, run.ts, workdir?, outRoot?, --trace[=path]?]
+  const args = process.argv.slice(2);
+  const positional: string[] = [];
+  let tracePath: string | undefined;
+  for (const a of args) {
+    if (a === "--trace") {
+      // Default trace sink: ~/.pi/traces/<sessionId>.jsonl (path resolved after sessionId is known)
+      tracePath = "__default__";
+    } else if (a.startsWith("--trace=")) {
+      tracePath = a.slice("--trace=".length);
+    } else {
+      positional.push(a);
+    }
+  }
+  const workdir = positional[0] ?? "./.pi-work";
+  const outRoot = positional[1] ?? "./.pi-out";
+  (async () => {
+    // Default trace path needs a sessionId, so resolve lazily inside runGoldenPath.
+    let resolvedTrace = tracePath;
+    if (tracePath === "__default__") {
+      resolvedTrace = join(homedir(), ".pi", "traces", "latest.jsonl");
+      await mkdir(join(homedir(), ".pi", "traces"), { recursive: true });
+    }
+    const id = await runGoldenPath(workdir, outRoot, { tracePath: resolvedTrace });
+    console.log("session " + id);
+    if (resolvedTrace) console.log("trace " + resolvedTrace);
+  })();
 }

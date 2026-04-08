@@ -25,6 +25,13 @@ export interface LoopInputs {
   concurrency?: ConcurrencyClassifier;
   compactTargetBytes?: number;
   retry?: { maxAttempts: number; baseDelayMs: number; maxDelayMs: number };
+  /**
+   * Optional JSONL trace sink. If set, every stream event is appended as a
+   * single JSON line with a wall-clock timestamp. Useful for debugging
+   * retries, compaction thresholds, and tool scheduling. Trace events are
+   * ADDITIONAL audit output; they do not replace the tape.
+   */
+  tracePath?: string;
 }
 
 export interface LoopResult {
@@ -65,6 +72,13 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
     events.push(e);
     await inp.tape.writeEvent(e);
     counters.inc("events." + e.type);
+    if (inp.tracePath) {
+      await appendJsonl(inp.tracePath, {
+        at: new Date().toISOString(),
+        sessionId: inp.sessionId,
+        event: e,
+      });
+    }
   };
 
   const flushBatch = async (batch: Extract<StreamEvent, { type: "tool_use" }>[]) => {
