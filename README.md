@@ -46,6 +46,154 @@ node dist/cli/index.js run --out ./.pi-out --workdir ./.pi-work
 
 ---
 
+## Pi quick-start cheat sheet
+
+> Run all `pi` commands from **`pi-multi-team-local/`** (one level above this directory).  
+> Extension paths use `../extensions/...` when invoked from `Agentic-Pi-Harness/`.
+
+**What each piece is:**
+
+- **Pi** — the interactive coding-agent shell (`pi`). You chat, it calls tools, edits files, runs bash.
+- **Extensions** (`-e ../extensions/<name>.ts`) — add runtime powers: safer tool interception, team orchestration, subagent dispatch, theme switching, session replay, etc.
+- **Skills** — specialized expertise packs loaded into a session (Pi Pi experts, subagent patterns, etc.).
+- **Prompts** (`.pi/prompts/*.md`) — reusable slash-command entry points that prime the model for a role.
+- **Teams / chains / subagents** — orchestration patterns: teams fan out to named agents, chains pass output forward, subagents spin up isolated worktrees.
+
+---
+
+### Default guarded-team stack
+
+Best all-round starting point: damage control (safe tool behaviour) + team orchestration + theme switching + startup label.
+
+```bash
+# Run from pi-multi-team-local/
+pi -e ../extensions/playground-boot.ts \
+   -e ../extensions/damage-control.ts \
+   -e ../extensions/agent-team.ts \
+   -e ../extensions/theme-cycler.ts
+```
+
+**Slash commands in this stack:**
+
+| Command | What it does |
+|---|---|
+| `/agents-team` | Show the active agent-team roster and current config |
+| `/agents-list` | List all defined agents with their descriptions |
+| `/agents-grid <1-6>` | Open a side-by-side grid view of 1–6 agents |
+| `/theme` | Cycle to the next theme |
+| `/theme <name>` | Switch to a named theme (e.g. `/theme dark`, `/theme ocean`) |
+
+**Prompt templates** (loaded from `.pi/prompts/`):
+
+| Prompt | What it does |
+|---|---|
+| `/lead` | Prime the model as a tech-lead — breaks down work, delegates, reviews |
+| `/orchestrator` | Prime as an orchestrator — coordinates agents, tracks progress |
+| `/worker` | Prime as a focused worker — takes a spec and implements it |
+
+---
+
+### Other startup presets
+
+#### Disciplined subagent stack
+Spin up isolated subagents in parallel worktrees. Use this when you want to split work across independent tasks and review results before merging.
+
+```bash
+pi -e ../extensions/playground-boot.ts \
+   -e ../extensions/tilldone.ts \
+   -e ../extensions/subagent-widget.ts \
+   -e ../extensions/theme-cycler.ts
+```
+
+| Command | What it does |
+|---|---|
+| `/sub <task>` | Spawn a new subagent in its own worktree for `<task>` |
+| `/subcont <number> <prompt>` | Continue subagent `<number>` with an additional prompt |
+| `/subrm <number>` | Remove subagent `<number>` and clean up its worktree |
+| `/subclear` | Remove all subagents |
+| `/tilldone` | Run the current task loop until the model signals completion |
+
+#### Pi Pi expert stack
+Eight domain experts (Prompt, Ext, Theme, TUI, Teams & Chains, Safety, Docs, Skill) that each answer from their own perspective. Use this when you want structured multi-viewpoint feedback on architecture or design decisions.
+
+```bash
+pi -e ../extensions/playground-boot.ts \
+   -e ../extensions/pi-pi.ts \
+   -e ../extensions/theme-cycler.ts
+```
+
+| Command | What it does |
+|---|---|
+| `/experts` | Ask all Pi Pi experts the same question; get one answer per expert |
+| `/experts-grid <1-5>` | Show 1–5 expert panels side by side |
+
+#### Kitchen-sink stack
+Every orchestration primitive loaded at once. Use this when exploring capabilities or stress-testing the full pipeline. Not recommended for focused implementation work.
+
+```bash
+pi -e ../extensions/playground-boot.ts \
+   -e ../extensions/damage-control.ts \
+   -e ../extensions/system-select.ts \
+   -e ../extensions/agent-team.ts \
+   -e ../extensions/agent-chain.ts \
+   -e ../extensions/session-replay.ts \
+   -e ../extensions/theme-cycler.ts \
+   -e ../extensions/minimal.ts
+```
+
+| Command | What it does |
+|---|---|
+| `/system` | Switch the active system prompt |
+| `/agents-team` | Show the agent-team roster |
+| `/agents-list` | List all agents |
+| `/agents-grid` | Grid view of agents |
+| `/chain` | Define and run an agent chain |
+| `/chain-list` | List configured chains |
+| `/replay` | Replay a previous session |
+| `/theme` | Switch theme |
+
+---
+
+### Useful Pi controls
+
+| Shortcut | What it does |
+|---|---|
+| `Escape` | Interrupt the current model response |
+| `Ctrl+C` | Clear current input |
+| `Ctrl+C` twice | Exit Pi |
+| `/` | Open slash-command palette |
+| `!<cmd>` | Run a bash command **with** Pi context injected |
+| `!!<cmd>` | Run a bash command **without** Pi context |
+| `Shift+Tab` | Cycle thinking level (none → low → medium → high) |
+| `Ctrl+L` | Select model |
+| `Ctrl+G` | Open current input in external editor (`$EDITOR`) |
+| Drag & drop file | Attach a file to the current message |
+
+---
+
+### Recommended workflow
+
+1. Start the guarded-team stack from `pi-multi-team-local/`
+2. Run `/agents-list` to confirm which agents are loaded
+3. Run `/agents-team` to see the active configuration
+4. Optionally switch theme: `/theme dark`
+5. Ask Pi to review architecture or break down a tier's implementation
+6. Switch to the subagent stack (`/sub <task>`) when parallel, isolated work is needed
+
+### Example prompts
+
+```
+Review the Agentic Pi Harness v0.3.0 implementation and break Tier A into a week-by-week sequence.
+```
+```
+Design the replay tape schema and versioning strategy for forward/backward compatibility.
+```
+```
+Use subagents to split work across effect runtime, policy provenance, and prompt assembly.
+```
+
+---
+
 ## Architecture
 
 The harness is structured in three tiers, each building on the last.
