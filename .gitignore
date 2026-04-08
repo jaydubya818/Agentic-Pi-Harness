@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.pi-work/
+.pi-out/
+*.log
+.DS_Store

@@ -1,0 +1,41 @@
+{
+  "name": "agentic-pi-harness",
+  "version": "0.0.1",
+  "description": "Supervised agent runtime built on Pi — Claude Code grade loop control, policy enforcement, deterministic replay, effect capture, and isolated sub-agents.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "pi-harness": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src tests",
+    "dev": "tsx src/cli/index.ts",
+    "doctor": "tsx src/cli/doctor.ts",
+    "verify": "tsx src/cli/verify.ts",
+    "replay": "tsx src/cli/replay.ts",
+    "what-changed": "tsx src/cli/what-changed.ts",
+    "prepare": "husky || true"
+  },
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "eslint": "^8.57.0",
+    "husky": "^9.0.0",
+    "prettier": "^3.2.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.4.0"
+  },
+  "keywords": ["agent", "harness", "pi", "claude-code", "replay", "agentic"],
+  "license": "MIT"
+}
