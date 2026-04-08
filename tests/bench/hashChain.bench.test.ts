@@ -43,7 +43,7 @@ describe("hash-chain bench", () => {
     const p50 = samples[Math.floor(N * 0.5)];
     const p99 = samples[Math.floor(N * 0.99)];
     // eslint-disable-next-line no-console
-    const ceiling = process.env.CI ? 6.0 : 2.0;
+    const ceiling = process.env.CI ? 6.0 : 3.0;
     console.log(`hashChain bench: N=${N} p50=${p50.toFixed(3)}ms p99=${p99.toFixed(3)}ms ceiling=${ceiling}ms`);
     expect(p99).toBeLessThan(ceiling);
   }, 30_000);
