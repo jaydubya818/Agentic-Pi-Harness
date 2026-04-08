@@ -2,6 +2,24 @@
 
 All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 
+## [0.3.0] — 2026-04-08
+
+Tier C continued. 28 test files, 84 tests, tsc clean. Zero new runtime deps. Windows support explicitly deferred.
+
+### Added
+- **Real pi.dev provider factory** — `createDefaultModelClient(fallbackScript)` in `src/adapter/defaultClient.ts` returns a `PiAdapterClient` wrapping `PiDevProvider` when `PI_HARNESS_PROVIDER` + `PI_HARNESS_MODEL` env vars are set; otherwise returns `MockModelClient`. Single choke point for mock-vs-real.
+- **Cost tracking** — `src/metrics/cost.ts` with `CostTable`, `CostTracker` (observes `text_delta` as output tokens, `tool_result` as next-turn input tokens, 4-chars-per-token heuristic), `CostRecord`. `LoopInputs.costTable?` wires it in; `LoopResult.cost: CostRecord | null`; counters gain `cost.inputTokens`, `cost.outputTokens`, `cost.micros_usd`.
+- **PolicyEngine rule inheritance** — rules may `extends: "<parentId>"`; child inherits parent's `match` + `action`, then overrides field-by-field. Resolution runs at engine construction; cycles raise `E_POLICY_CYCLE`. `getResolvedRules()` exposes the merged view for tests/debug.
+- **Shell-contract hook executor** — `src/hooks/shellHook.ts` spawns an external process, writes `{event, sessionId, turnIndex, payload}` JSON to stdin, reads a `HookResponse` from stdout, hard SIGKILL timeout. Non-zero exit or invalid JSON raises `E_HOOK_SHELL`. Lets hooks be written in any language.
+- New error codes: `E_POLICY_CYCLE`, `E_HOOK_SHELL`.
+
+### Changed
+- `PolicyRule.match` and `PolicyRule.action` are now optional (inheritance can fill them in).
+- `LoopResult` gains `cost: CostRecord | null`.
+
+### Deferred (C3)
+- Windows support (path handling, worktree isolation, `windows-latest` CI job).
+
 ## [0.2.0] — 2026-04-08
 
 Tier C (observability + semantic determinism). CI green on c175756. 24 test files, 70 tests, tsc clean.

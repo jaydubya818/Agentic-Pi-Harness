@@ -7,6 +7,7 @@ import { PolicyEngine } from "../policy/engine.js";
 import { wrapToolOutput } from "./promptAssembly.js";
 import { safeWriteJson } from "../session/provenance.js";
 import { Counters, CountersSink } from "../metrics/counter.js";
+import { CostTable, CostTracker, CostRecord } from "../metrics/cost.js";
 import { compact, CompactionRecord } from "../context/compaction.js";
 import { withRetry, defaultClassify } from "../retry/stateMachine.js";
 import { ConcurrencyClassifier, schedule, PendingCall } from "../tools/concurrency.js";
@@ -38,6 +39,12 @@ export interface LoopInputs {
    * to mirror every increment into OpenTelemetry.
    */
   counters?: CountersSink;
+  /**
+   * Optional cost table for per-stream USD accounting. If set, a CostTracker
+   * is built and every text_delta + tool_result is observed. The final
+   * `LoopResult.cost` is the snapshot at loop exit.
+   */
+  costTable?: CostTable;
 }
 
 export interface LoopResult {
@@ -47,6 +54,7 @@ export interface LoopResult {
   decisions: PolicyDecision[];
   compactions: CompactionRecord[];
   counters: Record<string, number>;
+  cost: CostRecord | null;
 }
 
 /**
@@ -63,6 +71,7 @@ export interface LoopResult {
  */
 export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
   const counters: CountersSink = inp.counters ?? new Counters();
+  const costTracker: CostTracker | null = inp.costTable ? new CostTracker(inp.costTable) : null;
   const events: StreamEvent[] = [];
   const effects: EffectRecord[] = [];
   const decisions: PolicyDecision[] = [];
@@ -78,6 +87,7 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
     events.push(e);
     await inp.tape.writeEvent(e);
     counters.inc("events." + e.type);
+    if (costTracker) costTracker.observe(e);
     if (inp.tracePath) {
       await appendJsonl(inp.tracePath, {
         at: new Date().toISOString(),
@@ -218,7 +228,13 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
   };
   await safeWriteJson(inp.checkpointPath, checkpoint);
 
-  return { events, compactedEvents, effects, decisions, compactions, counters: counters.snapshot() };
+  const cost = costTracker ? costTracker.snapshot() : null;
+  if (cost) {
+    counters.inc("cost.inputTokens", cost.inputTokens);
+    counters.inc("cost.outputTokens", cost.outputTokens);
+    counters.inc("cost.micros_usd", Math.round(cost.usd * 1e6));
+  }
+  return { events, compactedEvents, effects, decisions, compactions, counters: counters.snapshot(), cost };
 }
 
 function extractPaths(input: unknown): string[] {

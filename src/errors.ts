@@ -15,6 +15,9 @@ export type PiErrorCode =
   | "E_MODEL_ADAPTER"
   | "E_OTEL_UNAVAILABLE"
   | "E_LOG_UNAVAILABLE"
+  | "E_POLICY_CYCLE"
+  | "E_HOOK_SHELL"
+
   | "E_UNKNOWN";
 
 export class PiHarnessError extends Error {
