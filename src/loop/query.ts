@@ -6,7 +6,7 @@ import { placeholderApprove } from "../policy/decision.js";
 import { PolicyEngine } from "../policy/engine.js";
 import { wrapToolOutput } from "./promptAssembly.js";
 import { safeWriteJson } from "../session/provenance.js";
-import { Counters } from "../metrics/counter.js";
+import { Counters, CountersSink } from "../metrics/counter.js";
 import { compact, CompactionRecord } from "../context/compaction.js";
 import { withRetry, defaultClassify } from "../retry/stateMachine.js";
 import { ConcurrencyClassifier, schedule, PendingCall } from "../tools/concurrency.js";
@@ -32,6 +32,12 @@ export interface LoopInputs {
    * ADDITIONAL audit output; they do not replace the tape.
    */
   tracePath?: string;
+  /**
+   * Optional pluggable counters sink. Defaults to in-memory `Counters`.
+   * Supply `FanOutCounters([new Counters(), await createOtelCounters()])`
+   * to mirror every increment into OpenTelemetry.
+   */
+  counters?: CountersSink;
 }
 
 export interface LoopResult {
@@ -56,7 +62,7 @@ export interface LoopResult {
  *     always produces a tool_result on the tape.
  */
 export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
-  const counters = new Counters();
+  const counters: CountersSink = inp.counters ?? new Counters();
   const events: StreamEvent[] = [];
   const effects: EffectRecord[] = [];
   const decisions: PolicyDecision[] = [];

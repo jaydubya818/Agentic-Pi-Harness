@@ -18,6 +18,8 @@ jobs:
       - run: npm ci || npm install
       - run: npx tsc --noEmit
       - run: npx vitest run
+      - name: npm audit (high+ only)
+        run: npm audit --audit-level=high || exit 1
 
   golden-path:
     runs-on: ubuntu-latest
@@ -58,3 +60,13 @@ jobs:
           F1=$(ls ./.pi-out1/effects/*.jsonl | head -1)
           F2=$(ls ./.pi-out2/effects/*.jsonl | head -1)
           node scripts/compare-effects.mjs "$F1" "$F2"
+      - name: compare decision logs (exact)
+        run: |
+          D1=$(ls ./.pi-out1/sessions/*/policy.jsonl | head -1)
+          D2=$(ls ./.pi-out2/sessions/*/policy.jsonl | head -1)
+          node scripts/compare-decisions.mjs "$D1" "$D2"
+      - name: compare decision logs (semantic)
+        run: |
+          D1=$(ls ./.pi-out1/sessions/*/policy.jsonl | head -1)
+          D2=$(ls ./.pi-out2/sessions/*/policy.jsonl | head -1)
+          node scripts/compare-decisions.mjs --semantic "$D1" "$D2"

@@ -1,6 +1,6 @@
 {
   "name": "agentic-pi-harness",
-  "version": "0.1.0",
+  "version": "0.2.0-rc.1",
   "files": ["dist", "docs", "README.md", "LICENSE"],
   "description": "Supervised agent runtime built on Pi — Claude Code grade loop control, policy enforcement, deterministic replay, effect capture, and isolated sub-agents.",
   "type": "module",

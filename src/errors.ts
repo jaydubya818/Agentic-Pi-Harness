@@ -13,6 +13,8 @@ export type PiErrorCode =
   | "E_TOOL_FORBIDDEN"
   | "E_PROMPT_ASSEMBLY"
   | "E_MODEL_ADAPTER"
+  | "E_OTEL_UNAVAILABLE"
+  | "E_LOG_UNAVAILABLE"
   | "E_UNKNOWN";
 
 export class PiHarnessError extends Error {
