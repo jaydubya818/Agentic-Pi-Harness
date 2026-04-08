@@ -18,15 +18,26 @@ jobs:
       - run: npm ci || npm install
       - run: npx tsc --noEmit
       - run: npx vitest run
-      - name: golden run
-        run: |
-          node --experimental-specifier-resolution=node \
-               --loader tsx src/cli/run.ts ./.pi-work ./.pi-out || \
-          npx tsx src/cli/run.ts ./.pi-work ./.pi-out
+
+  golden-path:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci || npm install
+      - run: npx tsx src/cli/run.ts ./.pi-work ./.pi-out
       - name: verify tape hash chain
-        run: npx tsx src/cli/verify.ts "$(ls ./.pi-out/tapes/*.jsonl | head -1)"
-      - name: replay + pretty-print
-        run: npx tsx src/cli/replay.ts "$(ls ./.pi-out/tapes/*.jsonl | head -1)"
+        run: |
+          TAPE=$(ls ./.pi-out/tapes/*.jsonl | head -1)
+          npx tsx src/cli/verify.ts "$TAPE"
+      - name: replay pretty-print
+        run: |
+          TAPE=$(ls ./.pi-out/tapes/*.jsonl | head -1)
+          npx tsx src/cli/replay.ts "$TAPE"
 
   replay-drift:
     runs-on: ubuntu-latest
@@ -42,18 +53,8 @@ jobs:
         run: npx tsx src/cli/run.ts ./.pi-work1 ./.pi-out1
       - name: second run
         run: npx tsx src/cli/run.ts ./.pi-work2 ./.pi-out2
-      - name: compare effect logs (Level B drift)
+      - name: compare effect logs
         run: |
-          f1=$(ls ./.pi-out1/effects/*.jsonl | head -1)
-          f2=$(ls ./.pi-out2/effects/*.jsonl | head -1)
-          # Post-hashes must match across runs; effect-log equality
-          # proves the golden path is deterministic at Level B.
-          node -e "
-            const fs = require('fs');
-            const parse = p => fs.readFileSync(p,'utf8').trim().split('\n').map(JSON.parse);
-            const a = parse(process.argv[1]);
-            const b = parse(process.argv[2]);
-            const hs = l => l.map(r => JSON.stringify(r.postHashes)).join('|');
-            if (hs(a) !== hs(b)) { console.error('replay drift detected'); process.exit(1); }
-            console.log('replay deterministic: ' + a.length + ' effect records match');
-          " \"$f1\" \"$f2\"
+          F1=$(ls ./.pi-out1/effects/*.jsonl | head -1)
+          F2=$(ls ./.pi-out2/effects/*.jsonl | head -1)
+          node scripts/compare-effects.mjs "$F1" "$F2"
