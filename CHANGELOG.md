@@ -2,6 +2,21 @@
 
 All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 
+## [0.2.0] — 2026-04-08
+
+Tier C (observability + semantic determinism). CI green on c175756. 24 test files, 70 tests, tsc clean.
+
+### Added
+- **OpenTelemetry meter swap-in** — `createOtelCounters()` in `src/metrics/otel.ts` (lazy `@opentelemetry/api` peer import; throws `E_OTEL_UNAVAILABLE` if missing). `CountersSink` interface + `FanOutCounters` in `src/metrics/counter.ts` for multi-sink delegation. `LoopInputs.counters?: CountersSink` wires it into the query loop.
+- **Structured logging** — `src/obs/logger.ts` with `Logger` interface, `NoopLogger`, `JsonLogger` (stdout JSON-line + child bindings), and `createPinoLogger()` lazy peer-import adapter (throws `E_LOG_UNAVAILABLE`).
+- **Semantic decision drift** — `src/policy/semanticHash.ts` computes `sha256-semantic:` fingerprint over `{result, toolName, effectClass}` (rule-rename-invariant). `classifyEffect()` maps tool name + input shape to read-path / write-path / exec / net / other. `scripts/compare-decisions.mjs --semantic` runs in CI alongside the exact comparison.
+- **`npm audit --audit-level=high`** gate in CI test job (risk R12 from the register).
+- `PiErrorCode`: `E_OTEL_UNAVAILABLE`, `E_LOG_UNAVAILABLE`.
+
+### Changed
+- `Counters` now implements `CountersSink`; behavior unchanged.
+- Runtime deps still just zod. OTel and pino remain optional peers.
+
 ## [0.1.0] — 2026-04-08
 
 First tagged release. Tier A (runtime foundation) + Tier B (policy, hooks,
