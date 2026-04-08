@@ -4,3 +4,7 @@ dist/
 .pi-out/
 *.log
 .DS_Store
+
+.pi-out*/
+.pi-work*/
+vitest.config.ts.timestamp-*.mjs
