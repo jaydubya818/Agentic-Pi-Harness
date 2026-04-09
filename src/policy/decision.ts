@@ -131,9 +131,12 @@ export function renderPolicyInspection(decisions: PolicyDecision[]): string {
   return decisions.map((decision) => {
     const winningRule = decision.winningRuleId ? ` winningRule=${decision.winningRuleId}` : "";
     const approval = decision.approvalRequiredBy ? ` approvalRequiredBy=${decision.approvalRequiredBy}` : "";
+    const manifest = decision.manifestInfluence
+      ? ` manifestInfluence=${decision.manifestInfluence.field}:${decision.manifestInfluence.value}`
+      : "";
     const hook = decision.hookDecision
       ? ` hookDecision=${decision.hookDecision.decision}@${decision.hookDecision.hookId}${decision.hookDecision.reason ? `:${decision.hookDecision.reason}` : ""}`
       : "";
-    return `${decision.at} ${decision.toolCallId} ${decision.result} provenance=${decision.provenanceMode} mode=${decision.modeInfluence} policyDigest=${decision.policyDigest}${winningRule}${approval}${hook}`;
+    return `${decision.at} ${decision.toolCallId} ${decision.result} provenance=${decision.provenanceMode} mode=${decision.modeInfluence} policyDigest=${decision.policyDigest}${winningRule}${approval}${manifest}${hook}`;
   }).join("\n");
 }

@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MockModelClient } from "../../src/adapter/pi-adapter.js";
 import { EffectRecorder, readEffectLog } from "../../src/effect/recorder.js";
-import { RegisteredToolHook } from "../../src/hooks/mediation.js";
 import { runQueryLoop } from "../../src/loop/query.js";
 import { PolicyEngine, PolicyDoc } from "../../src/policy/engine.js";
 import { readPolicyLog } from "../../src/policy/decision.js";
@@ -19,83 +18,23 @@ function script(target: string): StreamEvent[] {
   ];
 }
 
-describe("query loop hook mediation", () => {
-  it("pre-hook deny persists hookDecision, emits deny-style tool_result, and skips effects", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "pi-hook-loop-"));
-    const target = join(dir, "math.test.ts");
+describe("query loop approvals", () => {
+  it("executes ask decisions after human approval and records runtime approval state", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-approval-approve-"));
+    const target = join(dir, "f.txt");
     await writeFile(target, "original\n", "utf8");
 
     const tapePath = join(dir, "tape.jsonl");
     const effectLogPath = join(dir, "effects.jsonl");
     const policyLogPath = join(dir, "policy.jsonl");
     const tape = new ReplayRecorder(tapePath);
-    await tape.writeHeader({ sessionId: "s1", loopGitSha: "dev", policyDigest: "sha256:policy", costTableVersion: "2026-04-01", createdAt: "2026-04-09T00:00:00.000Z" });
-
-    const policyDoc: PolicyDoc = {
-      schemaVersion: 1,
-      defaultAction: "approve",
-      rules: [{ id: "allow-write", action: "approve", match: { tool: "write_file" } }],
-    };
-    const hooks: RegisteredToolHook[] = [
-      { hookId: "block-write", event: "PreToolUse", timeoutMs: 100, fn: () => ({ outcome: "deny", reason: "review-required" }) },
-    ];
-
-    const result = await runQueryLoop({
-      sessionId: "s1",
-      model: new MockModelClient(script(target)),
-      tape,
-      effects: new EffectRecorder(),
-      checkpointPath: join(dir, "checkpoint.json"),
-      effectLogPath,
-      policyLogPath,
-      policy: new PolicyEngine(policyDoc),
-      policyMode: "real",
-      policyDigest: "sha256:policy",
-      hooks,
-      tools: {
-        write_file: async (input: { path: string; content: string }) => {
-          await writeFile(input.path, input.content, "utf8");
-          return { output: "wrote", paths: [input.path] };
-        },
-      },
-    });
-
-    expect(result.decisions).toHaveLength(1);
-    expect(result.decisions[0].result).toBe("deny");
-    expect(result.decisions[0].winningRuleId).toBe("allow-write");
-    expect(result.decisions[0].hookDecision).toEqual({ hookId: "block-write", decision: "deny", reason: "review-required" });
-    expect(result.effects).toHaveLength(0);
-    expect(result.compactedEvents).toEqual(result.events);
-    expect(result.compactions).toEqual([]);
-    expect(result.approvalPackets).toEqual([]);
-    expect(result.approvalDecisions).toEqual([]);
-    expect(await readFile(target, "utf8")).toBe("original\n");
-    expect(result.events.at(-2)).toMatchObject({ type: "tool_result", isError: true });
-    expect((result.events.at(-2) as Extract<StreamEvent, { type: "tool_result" }>).output).toContain("hook block-write");
-    expect((await verifyTape(tapePath)).ok).toBe(true);
-    expect(await readPolicyLog(policyLogPath)).toHaveLength(1);
-    await expect(readEffectLog(effectLogPath)).rejects.toMatchObject({ code: "E_SCHEMA_PARSE" });
-  });
-
-  it("post hooks are observe-only and invalid post outcomes do not change persisted artifacts", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "pi-hook-post-"));
-    const target = join(dir, "math.test.ts");
-    await writeFile(target, "original\n", "utf8");
-
-    const tapePath = join(dir, "tape.jsonl");
-    const effectLogPath = join(dir, "effects.jsonl");
-    const policyLogPath = join(dir, "policy.jsonl");
-    const tape = new ReplayRecorder(tapePath);
-    await tape.writeHeader({ sessionId: "s1", loopGitSha: "dev", policyDigest: "sha256:policy", costTableVersion: "2026-04-01", createdAt: "2026-04-09T00:00:00.000Z" });
+    await tape.writeHeader({ sessionId: "s1", loopGitSha: "dev", policyDigest: "sha256:policy", costTableVersion: "2026-04-01", createdAt: "2026-04-10T00:00:00.000Z" });
 
     const policyDoc: PolicyDoc = {
       schemaVersion: 1,
       defaultAction: "deny",
-      rules: [{ id: "allow-write", action: "approve", match: { tool: "write_file" } }],
+      rules: [{ id: "ask-write", action: "ask", match: { tool: "write_file" } }],
     };
-    const hooks: RegisteredToolHook[] = [
-      { hookId: "deny-post", event: "PostToolUse", timeoutMs: 100, fn: () => ({ outcome: "deny", reason: "too-late" }) },
-    ];
 
     const result = await runQueryLoop({
       sessionId: "s1",
@@ -107,8 +46,8 @@ describe("query loop hook mediation", () => {
       policyLogPath,
       policy: new PolicyEngine(policyDoc),
       policyMode: "real",
-      policyDigest: "sha256:policy",
-      hooks,
+      approvalRequester: { request: async () => ({ outcome: "approve", actor: "human", reason: "approved" }) },
+      approvalTimeoutMs: 10,
       tools: {
         write_file: async (input: { path: string; content: string }) => {
           await writeFile(input.path, input.content, "utf8");
@@ -119,15 +58,62 @@ describe("query loop hook mediation", () => {
 
     expect(result.decisions).toHaveLength(1);
     expect(result.decisions[0].result).toBe("approve");
-    expect(result.decisions[0].hookDecision).toBeNull();
+    expect(result.decisions[0].approvalRequiredBy).toBe("rule");
+    expect(result.approvalPackets).toHaveLength(1);
+    expect(result.approvalDecisions).toHaveLength(1);
+    expect(result.approvalDecisions[0].outcome).toBe("approve");
     expect(result.effects).toHaveLength(1);
-    expect(result.compactedEvents).toEqual(result.events);
-    expect(result.compactions).toEqual([]);
-    expect(result.approvalPackets).toEqual([]);
-    expect(result.approvalDecisions).toEqual([]);
     expect(await readFile(target, "utf8")).toBe("patched\n");
     expect((await verifyTape(tapePath)).ok).toBe(true);
-    const policyLog = await readPolicyLog(policyLogPath);
-    expect(policyLog[0].hookDecision).toBeNull();
+    expect(await readPolicyLog(policyLogPath)).toHaveLength(1);
+    expect(await readEffectLog(effectLogPath)).toHaveLength(1);
+  });
+
+  it("denies ask decisions on timeout and skips execution/effects", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-approval-timeout-"));
+    const target = join(dir, "f.txt");
+    await writeFile(target, "original\n", "utf8");
+
+    const tapePath = join(dir, "tape.jsonl");
+    const effectLogPath = join(dir, "effects.jsonl");
+    const policyLogPath = join(dir, "policy.jsonl");
+    const tape = new ReplayRecorder(tapePath);
+    await tape.writeHeader({ sessionId: "s1", loopGitSha: "dev", policyDigest: "sha256:policy", costTableVersion: "2026-04-01", createdAt: "2026-04-10T00:00:00.000Z" });
+
+    const policyDoc: PolicyDoc = {
+      schemaVersion: 1,
+      defaultAction: "deny",
+      rules: [{ id: "ask-write", action: "ask", match: { tool: "write_file" } }],
+    };
+
+    const result = await runQueryLoop({
+      sessionId: "s1",
+      model: new MockModelClient(script(target)),
+      tape,
+      effects: new EffectRecorder(),
+      checkpointPath: join(dir, "checkpoint.json"),
+      effectLogPath,
+      policyLogPath,
+      policy: new PolicyEngine(policyDoc),
+      policyMode: "real",
+      approvalTimeoutMs: 10,
+      tools: {
+        write_file: async (input: { path: string; content: string }) => {
+          await writeFile(input.path, input.content, "utf8");
+          return { output: "wrote", paths: [input.path] };
+        },
+      },
+    });
+
+    expect(result.decisions).toHaveLength(1);
+    expect(result.decisions[0].result).toBe("deny");
+    expect(result.decisions[0].approvalRequiredBy).toBe("rule");
+    expect(result.approvalPackets).toHaveLength(1);
+    expect(result.approvalDecisions[0].outcome).toBe("timeout");
+    expect(result.effects).toHaveLength(0);
+    expect(await readFile(target, "utf8")).toBe("original\n");
+    expect(result.events.at(-2)).toMatchObject({ type: "tool_result", isError: true });
+    expect((await verifyTape(tapePath)).ok).toBe(true);
+    await expect(readEffectLog(effectLogPath)).rejects.toMatchObject({ code: "E_SCHEMA_PARSE" });
   });
 });

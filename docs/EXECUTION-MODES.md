@@ -18,6 +18,7 @@ Every session runs in exactly one of five modes. Mode is set at session start an
 - **Policy default.** `ask` — unsafe tools prompt, safe tools pass.
 - **Hooks.** All tiers allowed.
 - **Sub-agents.** Allowed.
+- **Approvals.** Milestone 7 supervised-intervention layer may build runtime approval packets for `ask` decisions and mediate a final allow/deny outcome.
 - **Retry.** Default config (3 attempts, 10ms base, 200ms cap).
 - **Typical use.** IDE-attached coding, pairing, debugging.
 
@@ -26,7 +27,8 @@ Every session runs in exactly one of five modes. Mode is set at session start an
 - **Intent.** Run without a human in the loop, but on a trusted workstation with a real user's credentials.
 - **Policy default.** `approve` for tools whose rules match; `deny` otherwise (fail-closed).
 - **Hooks.** All tiers allowed, but `PreToolUse` hooks are mandatory for any exclusive-class tool.
-- **Sub-agents.** Allowed, must run in worktrees (`src/subagents/worktree.ts`).
+- **Sub-agents.** Allowed, must run in worktrees (`src/subagents/worktree.ts`) with child artifact separation.
+- **Scheduling.** Explicit `readonly | serial | exclusive` classifier may be supplied; visible result collation remains in original event order.
 - **Signed policy.** Recommended but not required. Unsigned policy logs a warning and runs.
 - **Typical use.** Scheduled refactors, nightly migrations, long bug hunts.
 
@@ -37,6 +39,8 @@ Every session runs in exactly one of five modes. Mode is set at session start an
 - **Signed policy.** Mandatory. Unsigned or tampered policy → `E_POLICY_SIG`, session aborts before first event.
 - **Hooks.** `module` only. `exec` and `http` hooks in the manifest → refuse to start.
 - **Sub-agents.** Allowed, always in worktrees, always inherit worker.
+- **Approvals.** Interactive approval requesters are disallowed by worker controls.
+- **Worker controls.** May enforce blast-radius limits (for example allowed write prefixes) and deny exclusive tools by default.
 - **Effect recorder.** Mandatory; `effectLogPath` cannot be `null`.
 - **Retry.** More conservative (6 attempts, 100ms base, 5s cap) because a human isn't watching.
 - **Typical use.** CI agents, fleet workers, sandboxed long-running jobs.

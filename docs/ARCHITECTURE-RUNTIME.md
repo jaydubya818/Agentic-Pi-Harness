@@ -25,11 +25,11 @@ Converts provider-specific streaming shapes into our `StreamEvent` discriminated
 
 **Invariant.** Every non-`StreamEvent` shape dies at this boundary. `E_MODEL_ADAPTER` is thrown for malformed chunks.
 
-## Layer 2 — Policy & Hooks (`src/policy/`, `src/hooks/`)
+## Layer 2 — Policy, Approvals & Hooks (`src/policy/`, `src/approvals/`, `src/hooks/`)
 
-Given a tool_use event, `PolicyEngine.decide()` produces a `PolicyDecision` with full provenance (matched rules, winning rule, evaluation order, mode/manifest/hook influences). `HookDispatcher` routes lifecycle events (`PreToolUse`, `PostToolUse`, `SessionStart`, etc.) to in-process hooks; shell/HTTP hooks are contract-only at this layer (see `HOOK-SECURITY.md`).
+Given a tool_use event, `PolicyEngine.decide()` produces a `PolicyDecision` with full provenance (matched rules, winning rule, evaluation order, mode/manifest/hook influences). If the decision is `ask`, the Milestone 7 supervised-intervention layer may build a deterministic runtime approval packet and mediate the final allow/deny outcome before execution. `HookDispatcher` routes lifecycle events (`PreToolUse`, `PostToolUse`, `SessionStart`, etc.) to in-process hooks; shell/HTTP hooks are contract-only at this layer (see `HOOK-SECURITY.md`).
 
-**Invariant.** A decision is always recorded before the tool runs. A deny decision short-circuits into a tool-error `StreamEvent` without touching Layer 3.
+**Invariant.** A final mediated decision is always recorded before the tool runs. A deny decision short-circuits into a tool-error `StreamEvent` without touching Layer 3.
 
 ## Layer 3 — Tool Dispatch (`src/tools/`)
 
@@ -69,6 +69,17 @@ Scheduling rules in the current release line:
 - serial and exclusive tools are never parallelized with mutating work
 - scheduler state (queues, in-flight work, plan groups) is runtime-only
 
+Approval rules in the current release line:
+- enabled only when policy returns `ask`
+- approval packets and pending human decision state are runtime-only
+- final mediated decision is persisted via the existing `PolicyDecision` contract
+- worker mode may prohibit interactive approvals entirely via stronger worker controls
+
+Worker-control rules in the current release line:
+- enabled only in `worker` mode and only when explicit controls are supplied
+- enforce signed-policy requirements, unattended execution restrictions, and write blast-radius checks
+- use existing extensible decision fields (for example `manifestInfluence`) rather than new persisted artifact families
+
 Compaction rules in the current release line:
 - disabled unless `compactTargetBytes` is explicitly supplied
 - tape history remains the source of truth
@@ -78,18 +89,19 @@ Compaction rules in the current release line:
 
 **Invariant.** The loop never writes to the filesystem except via Layer + recorders and `safeWriteJson`. Successful retries before the first persisted event are invisible in tape shape; once an event is written, the invocation is committed and will not be retried. Scheduling may change execution timing of allowed tools, but visible result collation stays deterministic and tape truth remains authoritative. Compaction may change the runtime context view, but it never mutates historical tape truth.
 
-## Layer 5 — Session & Provenance (`src/session/`)
+## Layer 5 — Session, Provenance & Subagents (`src/session/`, `src/subagents/`)
 
-Opens the session directory, writes the `ProvenanceManifest` (loopGitSha, repoGitSha, provider, model, costTableVersion, piMdDigest, policyDigest) via `safeWriteJson` (write-rename + fsync), and holds the `Checkpoint` for crash recovery.
+Opens the session directory, writes the `ProvenanceManifest` (loopGitSha, repoGitSha, provider, model, costTableVersion, piMdDigest, policyDigest) via `safeWriteJson` (write-rename + fsync), and holds the `Checkpoint` for crash recovery. Milestone 6 adds runtime-only parent/child subagent coordination around isolated git worktrees plus per-child artifact directories under the parent session tree.
 
-**Invariant.** The manifest is written once at session start and is the single place a reviewer looks to answer "what code, what model, what policy produced this tape?"
+**Invariant.** The manifest is written once at session start and is the single place a reviewer looks to answer "what code, what model, what policy produced this tape?" Subagent worktrees are always isolated from the parent repo and cleaned up after completion/cancellation.
 
-## Cross-cutting — Integrity & Audit (`src/replay/`, `src/effect/`, `src/metrics/`)
+## Cross-cutting — Integrity, Audit & Debugging (`src/replay/`, `src/effect/`, `src/metrics/`)
 
 - **`ReplayRecorder`** — append-only hash-chained tape (`ADR 0002`). Every `StreamEvent` goes through it.
 - **`EffectRecorder`** — pre-snapshot + post-capture for every mutating tool, emitting `EffectRecord`s with unified diffs and rollback confidence.
 - **`SanitizationRecord`** — per-tool-output wrapper rewrites (ANSI, nested tags, control chars, truncation).
 - **`Counters`** — in-memory observability (OTel swap is Tier C).
+- **Replay debugger helpers** — derive merged operator/debug timelines from the existing tape, policy, and effect artifacts without changing their persisted contracts.
 
 These are called by Layer 4 but written to by no other layer. They are the only things a post-hoc auditor needs to reconstruct a session.
 

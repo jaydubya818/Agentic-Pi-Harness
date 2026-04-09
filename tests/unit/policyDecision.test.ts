@@ -61,6 +61,8 @@ describe("policy decision contract", () => {
         at: "2026-04-08T00:00:01Z",
       }),
       result: "deny" as const,
+      approvalRequiredBy: "rule" as const,
+      manifestInfluence: { field: "workerControl", value: "writePathPrefix" },
       hookDecision: { hookId: "blocker", decision: "deny", reason: "review-required" },
     };
 
@@ -74,6 +76,8 @@ describe("policy decision contract", () => {
     expect(rendered).toContain("tool-2 deny provenance=real");
     expect(rendered).toContain("winningRule=allow-read");
     expect(rendered).toContain("hookDecision=deny@blocker:review-required");
+    expect(rendered).toContain("approvalRequiredBy=rule");
+    expect(rendered).toContain("manifestInfluence=workerControl:writePathPrefix");
     expect(rendered).toContain("policyDigest=sha256:policy-test");
     expect(rendered).toContain("mode=assist");
   });

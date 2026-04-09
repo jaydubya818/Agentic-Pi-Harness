@@ -16,6 +16,15 @@ import { safeWriteJson } from "../session/provenance.js";
 import { PiHarnessError } from "../errors.js";
 import { compactHistory, CompactionRecord } from "../context/compaction.js";
 import { ConcurrencyClassifier, scheduleCalls, ScheduledCall } from "../tools/concurrency.js";
+import {
+  ApprovalDecision,
+  ApprovalPacket,
+  ApprovalRequester,
+  applyApprovalDecision,
+  createApprovalPacket,
+  requestApprovalDecision,
+} from "../approvals/runtime.js";
+import { evaluateWorkerToolUse, validateWorkerModeInputs, WorkerModeControls } from "../runtime/workerControls.js";
 
 export type LoopMode = "plan" | "assist" | "autonomous" | "worker" | "dry-run";
 type ToolUseEvent = Extract<StreamEvent, { type: "tool_use" }>;
@@ -35,9 +44,12 @@ export interface LoopInputs {
   mode?: LoopMode;
   tracePath?: string;
   hooks?: RegisteredToolHook[];
+  approvalRequester?: ApprovalRequester;
+  approvalTimeoutMs?: number;
   retry?: { maxAttempts: number; baseDelayMs: number; maxDelayMs: number };
   concurrency?: ConcurrencyClassifier;
   compactTargetBytes?: number;
+  workerControls?: WorkerModeControls;
   counters?: unknown;
   costTable?: unknown;
 }
@@ -48,6 +60,8 @@ export interface LoopResult {
   effects: EffectRecord[];
   decisions: PolicyDecision[];
   compactions: CompactionRecord[];
+  approvalPackets: ApprovalPacket[];
+  approvalDecisions: ApprovalDecision[];
   counters: Record<string, number>;
   cost: null;
 }
@@ -272,6 +286,8 @@ async function prepareToolDispatch(
   counters: ReturnType<typeof createCounters>,
   effects: EffectRecord[],
   decisions: PolicyDecision[],
+  approvalPackets: ApprovalPacket[],
+  approvalDecisions: ApprovalDecision[],
   event: ToolUseEvent,
   order: number,
 ): Promise<PreparedToolDispatch> {
@@ -306,6 +322,40 @@ async function prepareToolDispatch(
     if (preHook.deniedBy) {
       decision = mergeHookDeniedDecision(baseDecision, preHook.deniedBy);
     }
+  }
+
+  if (decision.result === "ask") {
+    const packet = createApprovalPacket({
+      sessionId: inp.sessionId,
+      decision,
+      toolName: event.name,
+      timeoutMs: inp.approvalTimeoutMs ?? 30_000,
+    });
+    approvalPackets.push(packet);
+    const approval = await requestApprovalDecision({
+      packet,
+      requester: inp.approvalRequester,
+      timeoutMs: inp.approvalTimeoutMs ?? packet.timeoutMs,
+    });
+    approvalDecisions.push(approval);
+    counters.inc(`approval.${approval.outcome}`);
+    decision = applyApprovalDecision(decision, approval);
+  }
+
+  const classifier = resolveConcurrencyClassifier(inp.concurrency) ?? new ConcurrencyClassifier([]);
+  const workerDecision = evaluateWorkerToolUse({
+    mode,
+    workerControls: inp.workerControls,
+    toolName: event.name,
+    toolClass: classifier.classify(event.name),
+    toolInput: event.input,
+  });
+  if (!workerDecision.allowed) {
+    decision = {
+      ...decision,
+      result: "deny",
+      manifestInfluence: workerDecision.manifestInfluence,
+    };
   }
 
   decisions.push(decision);
@@ -366,13 +416,15 @@ async function flushPendingToolUses(
   events: StreamEvent[],
   effects: EffectRecord[],
   decisions: PolicyDecision[],
+  approvalPackets: ApprovalPacket[],
+  approvalDecisions: ApprovalDecision[],
   pendingToolUses: ToolUseEvent[],
 ): Promise<void> {
   if (pendingToolUses.length === 0) return;
 
   const prepared: PreparedToolDispatch[] = [];
   for (let index = 0; index < pendingToolUses.length; index++) {
-    prepared.push(await prepareToolDispatch(inp, mode, counters, effects, decisions, pendingToolUses[index], index));
+    prepared.push(await prepareToolDispatch(inp, mode, counters, effects, decisions, approvalPackets, approvalDecisions, pendingToolUses[index], index));
   }
 
   const scheduled = prepared
@@ -413,10 +465,18 @@ async function flushPendingToolUses(
 
 export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
   const mode = inp.mode ?? "assist";
+  validateWorkerModeInputs({
+    mode,
+    workerControls: inp.workerControls,
+    approvalRequesterConfigured: !!inp.approvalRequester,
+  });
+
   const counters = createCounters();
   const events: StreamEvent[] = [];
   const effects: EffectRecord[] = [];
   const decisions: PolicyDecision[] = [];
+  const approvalPackets: ApprovalPacket[] = [];
+  const approvalDecisions: ApprovalDecision[] = [];
   const pendingToolUses: ToolUseEvent[] = [];
   let messageCount = 0;
   let stopReason: string | null = null;
@@ -479,7 +539,7 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
       }
 
       if (next.done) {
-        await flushPendingToolUses(inp, mode, counters, events, effects, decisions, pendingToolUses);
+        await flushPendingToolUses(inp, mode, counters, events, effects, decisions, approvalPackets, approvalDecisions, pendingToolUses);
         completed = true;
         if (retried) counters.inc("retry.succeeded");
         break;
@@ -493,7 +553,7 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
         continue;
       }
 
-      await flushPendingToolUses(inp, mode, counters, events, effects, decisions, pendingToolUses);
+      await flushPendingToolUses(inp, mode, counters, events, effects, decisions, approvalPackets, approvalDecisions, pendingToolUses);
       const nonTool = await emitNonToolEvent(inp, counters, events, event);
       currentInvocationPersistedEvent = true;
       if (nonTool.messageStarted) {
@@ -533,6 +593,8 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
     effects,
     decisions,
     compactions,
+    approvalPackets,
+    approvalDecisions,
     counters: counters.snapshot(),
     cost: null,
   };

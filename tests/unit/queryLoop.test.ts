@@ -65,6 +65,8 @@ describe("query loop", () => {
     expect(result.decisions.every((decision) => decision.provenanceMode === "placeholder")).toBe(true);
     expect(result.compactedEvents).toEqual(result.events);
     expect(result.compactions).toEqual([]);
+    expect(result.approvalPackets).toEqual([]);
+    expect(result.approvalDecisions).toEqual([]);
 
     const tapeVerification = await verifyTape(tapePath);
     expect(tapeVerification.ok).toBe(true);

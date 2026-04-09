@@ -31,6 +31,8 @@ Milestone 4 compaction semantics do **not** mutate tape truth. Compaction only d
 
 Milestone 5 scheduling semantics also leave tape truth intact. Scheduling changes only how already-approved tool executions are dispatched at runtime; visible `tool_result` collation remains deterministic and replay continues to read the authoritative tape.
 
+Milestone 6/7/8 add subagent coordination, supervised approvals, and stronger worker controls as runtime layers around execution. They do not introduce a new tape event type or mutate historical tape truth. Where they affect persisted decisions, they do so only through already-existing extensible fields and the existing `PolicyDecision` record shape.
+
 Placeholder decisions (`provenanceMode: "placeholder"`) are tolerated against full decisions during Phase 1–2; after Phase 3 this becomes a hard diff.
 
 ## Migration posture
@@ -70,18 +72,26 @@ Retryable scope in this release line is intentionally narrow:
 
 That means replay stays compatible with the existing tape/effect/policy contracts: a successful retried invocation produces the same persisted sequence as a first-try success.
 
-## Compaction + scheduling compatibility
+## Compaction + scheduling + supervision compatibility
 
-Milestone 4/5 keep compaction and scheduling compatible with existing replay and inspection surfaces:
+Milestone 4–8 keep compaction, scheduling, approvals, subagent coordination, and worker controls compatible with existing replay and inspection surfaces:
 - no new persisted artifact family
 - no new replay tape event type
 - no mutation of historical tape records after emit
 - no persistence of scheduler queue / lane / in-flight state
+- no persistence of approval pending-state packets
+- no persistence of subagent in-flight coordination state
 - no compaction of policy logs, effect logs, provenance, or canonical goldens
 
 The compacted runtime view is deterministic from the event history plus `compactTargetBytes`. Same history + same threshold => same compacted result.
 
 The scheduler plan is deterministic from approved tool-use event order plus explicit classification. Same event history + same classifier => same visible tool-result ordering.
+
+Approval mediation is deterministic from the `ask` decision plus the runtime approval outcome. Worker controls are deterministic from mode + explicit controls + tool input.
+
+## Replay debugger / operator UX
+
+Milestone 10 adds library-only replay debugger helpers that derive merged timelines from the existing tape, policy log, and effect log. This is intentionally additive operator UX on top of existing persisted artifacts; it does not change the artifact contracts themselves.
 
 ## Hash chain
 
