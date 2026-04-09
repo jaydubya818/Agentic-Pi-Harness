@@ -1,0 +1,38 @@
+{
+  "policyMode": "placeholder",
+  "policy": null,
+  "cases": [
+    {
+      "name": "placeholder approves read_file",
+      "decisionInput": {
+        "toolCallId": "t1",
+        "toolName": "read_file",
+        "mode": "assist",
+        "input": { "path": "tests/math.test.ts" },
+        "policyDigest": "sha256:fixture-placeholder"
+      },
+      "expected": {
+        "result": "approve",
+        "provenanceMode": "placeholder",
+        "winningRuleId": null,
+        "evaluationOrder": []
+      }
+    },
+    {
+      "name": "placeholder approves write_file",
+      "decisionInput": {
+        "toolCallId": "t2",
+        "toolName": "write_file",
+        "mode": "assist",
+        "input": { "path": "tests/math.test.ts", "content": "patched" },
+        "policyDigest": "sha256:fixture-placeholder"
+      },
+      "expected": {
+        "result": "approve",
+        "provenanceMode": "placeholder",
+        "winningRuleId": null,
+        "evaluationOrder": []
+      }
+    }
+  ]
+}

@@ -7,42 +7,65 @@ import { join } from "node:path";
 
 const doc: PolicyDoc = {
   schemaVersion: 1,
-  default: "ask",
+  defaultAction: "deny",
   rules: [
-    { id: "deny-secrets", match: { tool: "read_file", pathPrefix: "/etc/" }, action: "deny" },
-    { id: "allow-repo-writes", match: { tool: "write_*", pathPrefix: "./src/" }, action: "approve" },
-    { id: "plan-mode-readonly", match: { mode: "plan", tool: "write_*" }, action: "deny" },
+    { id: "allow-read", action: "approve", match: { tool: "read_file" } },
+    { id: "allow-tests-write", action: "approve", match: { tool: "write_file", pathPrefix: "tests/" } },
+    { id: "deny-plan-write", action: "deny", match: { tool: "write_file", mode: "plan" } },
   ],
 };
 
 describe("PolicyEngine", () => {
   const eng = new PolicyEngine(doc);
 
-  it("denies secret reads with provenance", () => {
-    const d = eng.decide({ toolCallId: "a", toolName: "read_file", mode: "assist", input: { path: "/etc/passwd" } });
-    expect(d.result).toBe("deny");
-    expect(d.winningRuleId).toBe("deny-secrets");
-    expect(d.provenanceMode).toBe("full");
-    expect(d.evaluationOrder).toEqual(["deny-secrets", "allow-repo-writes", "plan-mode-readonly"]);
-  });
-
-  it("approves repo writes via glob", () => {
-    const d = eng.decide({ toolCallId: "b", toolName: "write_file", mode: "assist", input: { path: "./src/x.ts" } });
+  it("approves reads with real provenance", () => {
+    const d = eng.decide({
+      toolCallId: "a",
+      toolName: "read_file",
+      mode: "assist",
+      input: { path: "tests/math.test.ts" },
+      at: "2026-04-09T00:00:00Z",
+    });
     expect(d.result).toBe("approve");
-    expect(d.winningRuleId).toBe("allow-repo-writes");
+    expect(d.winningRuleId).toBe("allow-read");
+    expect(d.provenanceMode).toBe("real");
+    expect(d.evaluationOrder).toEqual(["allow-read", "allow-tests-write", "deny-plan-write"]);
   });
 
-  it("falls through to default ask", () => {
-    const d = eng.decide({ toolCallId: "c", toolName: "bash", mode: "assist", input: { cmd: "ls" } });
-    expect(d.result).toBe("ask");
+  it("approves writes under tests/ via pathPrefix match", () => {
+    const d = eng.decide({
+      toolCallId: "b",
+      toolName: "write_file",
+      mode: "assist",
+      input: { path: "tests/math.test.ts", content: "patched" },
+      at: "2026-04-09T00:00:00Z",
+    });
+    expect(d.result).toBe("approve");
+    expect(d.winningRuleId).toBe("allow-tests-write");
+  });
+
+  it("falls through to explicit default deny", () => {
+    const d = eng.decide({
+      toolCallId: "c",
+      toolName: "stat_file",
+      mode: "assist",
+      input: { path: "tests/math.test.ts" },
+      at: "2026-04-09T00:00:00Z",
+    });
+    expect(d.result).toBe("deny");
     expect(d.winningRuleId).toBeNull();
   });
 
-  it("plan mode blocks writes (first match wins)", () => {
-    // allow-repo-writes comes first, so src writes are allowed even in plan mode.
-    // This test documents that rule order matters.
-    const d = eng.decide({ toolCallId: "d", toolName: "write_file", mode: "plan", input: { path: "./src/x.ts" } });
+  it("matches mode exactly with first-match-wins order", () => {
+    const d = eng.decide({
+      toolCallId: "d",
+      toolName: "write_file",
+      mode: "plan",
+      input: { path: "tests/math.test.ts", content: "patched" },
+      at: "2026-04-09T00:00:00Z",
+    });
     expect(d.result).toBe("approve");
+    expect(d.winningRuleId).toBe("allow-tests-write");
   });
 });
 
@@ -65,7 +88,7 @@ describe("signed policy", () => {
     const key = Buffer.from("k".repeat(32));
     await writeFile(p, JSON.stringify(doc));
     await writeFile(p + ".sig", signPolicy(doc, key));
-    const tampered = { ...doc, default: "approve" as const };
+    const tampered: PolicyDoc = { ...doc, defaultAction: "approve" };
     await writeFile(p, JSON.stringify(tampered));
     await expect(loadPolicy(p, { key, strict: true })).rejects.toThrow(/signature/);
   });

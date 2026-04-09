@@ -1,169 +1,103 @@
 import { z } from "zod";
 import { PolicyDecision } from "../schemas/index.js";
-import { PiHarnessError } from "../errors.js";
 
-/**
- * Tier B permission engine: rule-based allow/deny with full provenance.
- * Rules are evaluated in order. First matching rule wins. If no rule matches,
- * the default action is used.
- *
- * v0.3.0: rules may `extends` another rule by id. The child inherits the
- * parent's `match` and `action`, then overrides with its own specified
- * fields. Inheritance is resolved at engine construction; cycles raise
- * E_POLICY_CYCLE. Every decision records `inheritedFromByRule` so drift
- * analysis can distinguish an override from a rename.
- */
+export const PolicyMatchSchema = z.object({
+  tool: z.string().min(1).optional(),
+  mode: z.enum(["plan", "assist", "autonomous", "worker", "dry-run"]).optional(),
+  path: z.string().min(1).optional(),
+  pathPrefix: z.string().min(1).optional(),
+}).partial();
+export type PolicyMatch = z.infer<typeof PolicyMatchSchema>;
+
 export const PolicyRuleSchema = z.object({
   id: z.string().min(1),
-  extends: z.string().optional(),
-  match: z.object({
-    tool: z.string().optional(),
-    mode: z.enum(["plan", "assist", "autonomous", "worker", "dry-run"]).optional(),
-    pathPrefix: z.string().optional(),
-    inputContains: z.string().optional(),
-  }).partial().optional(),
-  action: z.enum(["approve", "deny", "ask"]).optional(),
+  action: z.enum(["approve", "deny", "ask"]),
+  match: PolicyMatchSchema.default({}),
   reason: z.string().optional(),
 });
 export type PolicyRule = z.infer<typeof PolicyRuleSchema>;
 
 export const PolicyDocSchema = z.object({
   schemaVersion: z.literal(1),
-  default: z.enum(["approve", "deny", "ask"]),
+  defaultAction: z.enum(["approve", "deny", "ask"]),
   rules: z.array(PolicyRuleSchema),
 });
 export type PolicyDoc = z.infer<typeof PolicyDocSchema>;
-
-interface ResolvedRule {
-  id: string;
-  match: NonNullable<PolicyRule["match"]>;
-  action: "approve" | "deny" | "ask";
-  reason?: string;
-  inheritedFrom: string[];
-}
 
 export interface DecisionInput {
   toolCallId: string;
   toolName: string;
   mode: "plan" | "assist" | "autonomous" | "worker" | "dry-run";
   input: unknown;
-  manifestInfluence?: { field: string; value: string } | null;
-  hookInfluence?: { hookId: string; decision: string; reason?: string } | null;
   policyDigest?: string;
+  at?: string;
 }
-
-function globMatch(pattern: string, value: string): boolean {
-  if (pattern === "*") return true;
-  if (!pattern.includes("*")) return pattern === value;
-  const re = new RegExp("^" + pattern.split("*").map(escapeRe).join(".*") + "$");
-  return re.test(value);
-}
-function escapeRe(s: string): string { return s.replace(/[.+?^${}()|[\]\\]/g, "\\$&"); }
 
 function pathsOf(input: unknown): string[] {
   if (input && typeof input === "object") {
-    const o = input as Record<string, unknown>;
-    if (typeof o.path === "string") return [o.path];
-    if (Array.isArray(o.paths)) return o.paths.filter((p): p is string => typeof p === "string");
+    const record = input as Record<string, unknown>;
+    if (typeof record.path === "string") return [record.path];
+    if (Array.isArray(record.paths)) return record.paths.filter((path): path is string => typeof path === "string");
   }
   return [];
 }
 
-function ruleMatches(rule: ResolvedRule, inp: DecisionInput): boolean {
-  const m = rule.match;
-  if (m.tool && !globMatch(m.tool, inp.toolName)) return false;
-  if (m.mode && m.mode !== inp.mode) return false;
-  if (m.pathPrefix) {
-    const ps = pathsOf(inp.input);
-    if (!ps.some((p) => p.startsWith(m.pathPrefix!))) return false;
-  }
-  if (m.inputContains) {
-    if (!JSON.stringify(inp.input ?? null).includes(m.inputContains)) return false;
-  }
+export function ruleMatches(rule: PolicyRule, input: DecisionInput): boolean {
+  const match = rule.match ?? {};
+  if (match.tool && match.tool !== input.toolName) return false;
+  if (match.mode && match.mode !== input.mode) return false;
+
+  const paths = pathsOf(input.input);
+  if (match.path && !paths.some((path) => path === match.path)) return false;
+  if (match.pathPrefix && !paths.some((path) => path.startsWith(match.pathPrefix!))) return false;
+
   return true;
 }
 
-/**
- * Resolve `extends:` chains. Returns rules in original order with parent
- * match/action merged in before child overrides. Detects cycles.
- */
-export function resolveRules(rules: PolicyRule[]): ResolvedRule[] {
-  const byId = new Map<string, PolicyRule>();
-  for (const r of rules) byId.set(r.id, r);
-  const cache = new Map<string, ResolvedRule>();
-  const resolving = new Set<string>();
+export function evaluatePolicyDecision(doc: PolicyDoc, input: DecisionInput): PolicyDecision {
+  const evaluationOrder = doc.rules.map((rule) => rule.id);
+  let winningRuleIndex = -1;
 
-  const resolve = (id: string): ResolvedRule => {
-    const hit = cache.get(id);
-    if (hit) return hit;
-    if (resolving.has(id)) {
-      throw new PiHarnessError("E_POLICY_CYCLE", "policy rule inheritance cycle at: " + id);
-    }
-    resolving.add(id);
-    const raw = byId.get(id);
-    if (!raw) throw new PiHarnessError("E_POLICY_CYCLE", "policy rule missing: " + id);
-    let base: ResolvedRule = { id, match: {}, action: "approve", inheritedFrom: [] };
-    if (raw.extends) {
-      const parent = resolve(raw.extends);
-      base = {
-        id,
-        match: { ...parent.match },
-        action: parent.action,
-        reason: parent.reason,
-        inheritedFrom: [...parent.inheritedFrom, parent.id],
-      };
-    }
-    if (raw.match) base.match = { ...base.match, ...raw.match };
-    if (raw.action) base.action = raw.action;
-    if (raw.reason) base.reason = raw.reason;
-    resolving.delete(id);
-    cache.set(id, base);
-    return base;
+  const ruleEvaluation = doc.rules.map((rule, index) => {
+    const matched = ruleMatches(rule, input);
+    if (matched && winningRuleIndex === -1) winningRuleIndex = index;
+    return {
+      scope: "project" as const,
+      ruleId: rule.id,
+      matched,
+      effect: rule.action === "approve" ? "allow" as const : "deny" as const,
+    };
+  });
+
+  const winningRule = winningRuleIndex === -1 ? null : doc.rules[winningRuleIndex];
+  const result = winningRule ? winningRule.action : doc.defaultAction;
+
+  return {
+    schemaVersion: 1,
+    toolCallId: input.toolCallId,
+    result,
+    provenanceMode: "real",
+    modeInfluence: input.mode,
+    manifestInfluence: null,
+    ruleEvaluation,
+    evaluationOrder,
+    winningRuleId: winningRule ? winningRule.id : null,
+    hookDecision: null,
+    mutatedByHook: false,
+    approvalRequiredBy: null,
+    policyDigest: input.policyDigest ?? "sha256:policy-unknown",
+    at: input.at ?? new Date().toISOString(),
   };
-
-  return rules.map((r) => resolve(r.id));
 }
 
 export class PolicyEngine {
-  private resolved: ResolvedRule[];
-  constructor(private doc: PolicyDoc) {
-    this.resolved = resolveRules(doc.rules);
+  constructor(private readonly doc: PolicyDoc) {}
+
+  decide(input: DecisionInput): PolicyDecision {
+    return evaluatePolicyDecision(this.doc, input);
   }
-  decide(inp: DecisionInput): PolicyDecision {
-    const ruleEvaluation: PolicyDecision["ruleEvaluation"] = [];
-    const order: string[] = [];
-    let winning: ResolvedRule | null = null;
-    for (const r of this.resolved) {
-      order.push(r.id);
-      const matched = ruleMatches(r, inp);
-      ruleEvaluation.push({
-        scope: "project",
-        ruleId: r.id,
-        matched,
-        effect: r.action === "approve" ? "allow" : "deny",
-      });
-      if (matched && !winning) {
-        winning = r;
-      }
-    }
-    const result = winning ? winning.action : this.doc.default;
-    return {
-      schemaVersion: 1,
-      toolCallId: inp.toolCallId,
-      result,
-      provenanceMode: "full",
-      modeInfluence: inp.mode,
-      manifestInfluence: inp.manifestInfluence ?? null,
-      ruleEvaluation,
-      evaluationOrder: order,
-      winningRuleId: winning?.id ?? null,
-      hookDecision: inp.hookInfluence ?? null,
-      mutatedByHook: false,
-      approvalRequiredBy: result === "ask" ? "rule" : null,
-      policyDigest: inp.policyDigest ?? "sha256:policy-unknown",
-      at: new Date().toISOString(),
-    };
+
+  getRules(): PolicyRule[] {
+    return [...this.doc.rules];
   }
-  /** Exposed for tests/debug: returns the resolved-after-inheritance view. */
-  getResolvedRules(): ResolvedRule[] { return this.resolved; }
 }

@@ -1,0 +1,29 @@
+{
+  "policyMode": "real",
+  "policy": {
+    "schemaVersion": 1,
+    "defaultAction": "deny",
+    "rules": [
+      { "id": "first-allow-tests-write", "action": "approve", "match": { "tool": "write_file", "pathPrefix": "tests/" } },
+      { "id": "second-deny-tests-write", "action": "deny", "match": { "tool": "write_file", "pathPrefix": "tests/" } }
+    ]
+  },
+  "cases": [
+    {
+      "name": "first matching rule wins deterministically",
+      "decisionInput": {
+        "toolCallId": "t1",
+        "toolName": "write_file",
+        "mode": "assist",
+        "input": { "path": "tests/math.test.ts", "content": "patched" },
+        "policyDigest": "sha256:fixture-precedence"
+      },
+      "expected": {
+        "result": "approve",
+        "provenanceMode": "real",
+        "winningRuleId": "first-allow-tests-write",
+        "evaluationOrder": ["first-allow-tests-write", "second-deny-tests-write"]
+      }
+    }
+  ]
+}

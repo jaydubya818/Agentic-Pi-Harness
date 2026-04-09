@@ -1,61 +1,44 @@
 import { describe, it, expect } from "vitest";
-import { PolicyEngine, PolicyDoc, resolveRules } from "../../src/policy/engine.js";
-import { PiHarnessError } from "../../src/errors.js";
+import { PolicyEngine, PolicyDoc, ruleMatches } from "../../src/policy/engine.js";
 
-const base: PolicyDoc = {
+const precedenceDoc: PolicyDoc = {
   schemaVersion: 1,
-  default: "approve",
+  defaultAction: "deny",
   rules: [
-    { id: "deny-writes", match: { tool: "write_*" }, action: "deny", reason: "parent" },
-    { id: "deny-writes-src", extends: "deny-writes", match: { pathPrefix: "/src/" } },
+    { id: "first-allow-tests-write", action: "approve", match: { tool: "write_file", pathPrefix: "tests/" } },
+    { id: "second-deny-tests-write", action: "deny", match: { tool: "write_file", pathPrefix: "tests/" } },
   ],
 };
 
-describe("PolicyEngine rule inheritance", () => {
-  it("child inherits match.tool + action from parent, adds pathPrefix", () => {
-    const resolved = resolveRules(base.rules);
-    const child = resolved.find((r) => r.id === "deny-writes-src")!;
-    expect(child.match.tool).toBe("write_*");
-    expect(child.match.pathPrefix).toBe("/src/");
-    expect(child.action).toBe("deny");
-    expect(child.inheritedFrom).toEqual(["deny-writes"]);
+describe("PolicyEngine precedence", () => {
+  it("supports exact tool matching without globbing", () => {
+    expect(ruleMatches(precedenceDoc.rules[0], {
+      toolCallId: "t1",
+      toolName: "write_file",
+      mode: "assist",
+      input: { path: "tests/math.test.ts" },
+    })).toBe(true);
+
+    expect(ruleMatches(precedenceDoc.rules[0], {
+      toolCallId: "t2",
+      toolName: "write_other",
+      mode: "assist",
+      input: { path: "tests/math.test.ts" },
+    })).toBe(false);
   });
 
-  it("inherited rule fires on match", () => {
-    const eng = new PolicyEngine(base);
+  it("first matching rule wins deterministically", () => {
+    const eng = new PolicyEngine(precedenceDoc);
     const d = eng.decide({
-      toolCallId: "t1", toolName: "write_file", mode: "assist",
-      input: { path: "/src/index.ts", content: "x" },
+      toolCallId: "t1",
+      toolName: "write_file",
+      mode: "assist",
+      input: { path: "tests/math.test.ts", content: "patched" },
+      at: "2026-04-09T00:00:00Z",
     });
-    expect(d.result).toBe("deny");
-    expect(d.ruleEvaluation.map((entry) => entry.ruleId)).toContain("deny-writes");
-    expect(d.ruleEvaluation.map((entry) => entry.ruleId)).toContain("deny-writes-src");
-  });
 
-  it("child can override parent action", () => {
-    const doc: PolicyDoc = {
-      schemaVersion: 1,
-      default: "approve",
-      rules: [
-        { id: "a", match: { tool: "read_*" }, action: "deny" },
-        { id: "b", extends: "a", action: "approve" },
-      ],
-    };
-    const eng = new PolicyEngine(doc);
-    // both a and b match read_file; b wins for its own decide only if it comes first.
-    // Here a is first, so a wins. Verify resolution independently:
-    expect(eng.getResolvedRules().find((r) => r.id === "b")!.action).toBe("approve");
-  });
-
-  it("detects inheritance cycles as E_POLICY_CYCLE", () => {
-    const doc: PolicyDoc = {
-      schemaVersion: 1,
-      default: "approve",
-      rules: [
-        { id: "x", extends: "y", action: "deny" },
-        { id: "y", extends: "x", action: "approve" },
-      ],
-    };
-    expect(() => new PolicyEngine(doc)).toThrow(PiHarnessError);
+    expect(d.result).toBe("approve");
+    expect(d.winningRuleId).toBe("first-allow-tests-write");
+    expect(d.evaluationOrder).toEqual(["first-allow-tests-write", "second-deny-tests-write"]);
   });
 });

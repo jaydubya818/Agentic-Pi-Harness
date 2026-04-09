@@ -3,9 +3,24 @@ import { dirname } from "node:path";
 import { parseOrThrow, PolicyDecision, PolicyDecisionSchema } from "../schemas/index.js";
 import { PiHarnessError } from "../errors.js";
 
+export type PolicyMode = "placeholder" | "real";
+export type PolicyRuntimeLoopMode = "plan" | "assist" | "autonomous" | "worker" | "dry-run";
+
+export interface PolicyDecisionInput {
+  toolCallId: string;
+  toolName: string;
+  mode: PolicyRuntimeLoopMode;
+  input: unknown;
+  policyDigest?: string;
+}
+
+export interface PolicyDecider {
+  decide(input: PolicyDecisionInput): PolicyDecision;
+}
+
 export interface PlaceholderDecisionInput {
   toolCallId: string;
-  modeInfluence: "plan" | "assist" | "autonomous" | "worker" | "dry-run";
+  modeInfluence: PolicyRuntimeLoopMode;
   policyDigest: string;
   at?: string;
 }
@@ -31,6 +46,39 @@ export function placeholderApprove(input: PlaceholderDecisionInput): PolicyDecis
     policyDigest: input.policyDigest,
     at: input.at ?? new Date().toISOString(),
   };
+}
+
+export function decidePolicy(input: {
+  policyMode?: PolicyMode;
+  policy?: PolicyDecider;
+  toolCallId: string;
+  toolName: string;
+  mode: PolicyRuntimeLoopMode;
+  input: unknown;
+  policyDigest?: string;
+}): PolicyDecision {
+  const policyMode = input.policyMode ?? "placeholder";
+  if (policyMode === "real") {
+    if (!input.policy) {
+      throw new PiHarnessError("E_UNKNOWN", "real policy mode requires a policy decider", {
+        toolCallId: input.toolCallId,
+        toolName: input.toolName,
+      });
+    }
+    return input.policy.decide({
+      toolCallId: input.toolCallId,
+      toolName: input.toolName,
+      mode: input.mode,
+      input: input.input,
+      policyDigest: input.policyDigest,
+    });
+  }
+
+  return placeholderApprove({
+    toolCallId: input.toolCallId,
+    modeInfluence: input.mode,
+    policyDigest: input.policyDigest ?? "sha256:policy-unknown",
+  });
 }
 
 export async function appendPolicyDecision(path: string, decision: PolicyDecision): Promise<void> {
@@ -83,6 +131,9 @@ export function renderPolicyInspection(decisions: PolicyDecision[]): string {
   return decisions.map((decision) => {
     const winningRule = decision.winningRuleId ? ` winningRule=${decision.winningRuleId}` : "";
     const approval = decision.approvalRequiredBy ? ` approvalRequiredBy=${decision.approvalRequiredBy}` : "";
-    return `${decision.at} ${decision.toolCallId} ${decision.result} provenance=${decision.provenanceMode} mode=${decision.modeInfluence} policyDigest=${decision.policyDigest}${winningRule}${approval}`;
+    const hook = decision.hookDecision
+      ? ` hookDecision=${decision.hookDecision.decision}@${decision.hookDecision.hookId}${decision.hookDecision.reason ? `:${decision.hookDecision.reason}` : ""}`
+      : "";
+    return `${decision.at} ${decision.toolCallId} ${decision.result} provenance=${decision.provenanceMode} mode=${decision.modeInfluence} policyDigest=${decision.policyDigest}${winningRule}${approval}${hook}`;
   }).join("\n");
 }

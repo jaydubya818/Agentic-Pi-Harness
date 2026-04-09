@@ -2,21 +2,12 @@ import { ModelClient } from "../adapter/pi-adapter.js";
 import { Checkpoint, EffectRecord, PolicyDecision, StreamEvent } from "../schemas/index.js";
 import { ReplayRecorder } from "../replay/recorder.js";
 import { appendEffectRecord, EffectRecorder } from "../effect/recorder.js";
-import { appendPolicyDecision, placeholderApprove } from "../policy/decision.js";
+import { dispatchPostToolHooks, dispatchPreToolHooks, mergeHookDeniedDecision, RegisteredToolHook } from "../hooks/mediation.js";
+import { appendPolicyDecision, decidePolicy, PolicyDecider, PolicyMode } from "../policy/decision.js";
 import { wrapToolOutput } from "./promptAssembly.js";
 import { safeWriteJson } from "../session/provenance.js";
 
 export type LoopMode = "plan" | "assist" | "autonomous" | "worker" | "dry-run";
-
-export interface PolicyDecider {
-  decide(input: {
-    toolCallId: string;
-    toolName: string;
-    mode: LoopMode;
-    input: unknown;
-    policyDigest?: string;
-  }): PolicyDecision;
-}
 
 export interface LoopInputs {
   sessionId: string;
@@ -28,9 +19,11 @@ export interface LoopInputs {
   policyLogPath: string;
   tools: Record<string, (input: any) => Promise<{ output: string; paths: string[] }>>;
   policy?: PolicyDecider;
+  policyMode?: PolicyMode;
   policyDigest?: string;
   mode?: LoopMode;
   tracePath?: string;
+  hooks?: RegisteredToolHook[];
   retry?: { maxAttempts: number; baseDelayMs: number; maxDelayMs: number };
   concurrency?: unknown;
   compactTargetBytes?: number;
@@ -127,19 +120,38 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
       continue;
     }
 
-    const decision = inp.policy
-      ? inp.policy.decide({
+    const baseDecision = decidePolicy({
+      policyMode: inp.policyMode,
+      policy: inp.policy,
+      toolCallId: event.id,
+      toolName: event.name,
+      mode,
+      input: event.input,
+      policyDigest: inp.policyDigest,
+    });
+
+    let decision = baseDecision;
+    if (decision.result !== "deny" && inp.hooks?.length) {
+      const preHook = await dispatchPreToolHooks(inp.hooks, {
+        event: "PreToolUse",
+        sessionId: inp.sessionId,
+        turnIndex: 0,
+        payload: {
           toolCallId: event.id,
           toolName: event.name,
           mode,
           input: event.input,
-          policyDigest: inp.policyDigest,
-        })
-      : placeholderApprove({
-          toolCallId: event.id,
-          modeInfluence: mode,
-          policyDigest: inp.policyDigest ?? "sha256:policy-unknown",
-        });
+          baseDecision: {
+            result: baseDecision.result,
+            provenanceMode: baseDecision.provenanceMode,
+            winningRuleId: baseDecision.winningRuleId,
+          },
+        },
+      });
+      if (preHook.deniedBy) {
+        decision = mergeHookDeniedDecision(baseDecision, preHook.deniedBy);
+      }
+    }
 
     decisions.push(decision);
     await appendPolicyDecision(inp.policyLogPath, decision);
@@ -149,11 +161,12 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
 
     if (decision.result === "deny") {
       counters.inc("tool.denied");
+      const deniedByHook = decision.hookDecision ? ` (hook ${decision.hookDecision.hookId})` : "";
       toolResult = {
         type: "tool_result",
         schemaVersion: 1,
         id: event.id,
-        output: `denied by policy${decision.winningRuleId ? ` (${decision.winningRuleId})` : ""}`,
+        output: `denied by policy${decision.winningRuleId ? ` (${decision.winningRuleId})` : ""}${deniedByHook}`,
         isError: true,
       };
       await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
@@ -191,10 +204,41 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
         effects.push(effect);
         await appendEffectRecord(inp.effectLogPath, effect);
       }
+
+      if (inp.hooks?.length) {
+        await dispatchPostToolHooks(inp.hooks, {
+          event: "PostToolUse",
+          sessionId: inp.sessionId,
+          turnIndex: 0,
+          payload: {
+            toolCallId: event.id,
+            toolName: event.name,
+            mode,
+            input: event.input,
+            isError: false,
+            paths: result.paths,
+          },
+        });
+      }
     } catch (error) {
       isError = true;
       rawOutput = `tool error: ${String((error as Error).message)}`;
       counters.inc("tool.error");
+      if (inp.hooks?.length) {
+        await dispatchPostToolHooks(inp.hooks, {
+          event: "PostToolUse",
+          sessionId: inp.sessionId,
+          turnIndex: 0,
+          payload: {
+            toolCallId: event.id,
+            toolName: event.name,
+            mode,
+            input: event.input,
+            isError: true,
+            paths: [],
+          },
+        });
+      }
     }
 
     const { wrapped } = wrapToolOutput(rawOutput, {

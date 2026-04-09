@@ -7,8 +7,8 @@ import { PolicyDoc } from "../../src/policy/engine.js";
 
 const doc: PolicyDoc = {
   schemaVersion: 1,
-  default: "ask",
-  rules: [{ id: "r", match: { tool: "*" }, action: "approve" }],
+  defaultAction: "approve",
+  rules: [],
 };
 
 describe("worker mode signed-policy refusal", () => {

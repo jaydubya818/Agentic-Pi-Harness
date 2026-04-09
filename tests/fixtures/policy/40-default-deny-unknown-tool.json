@@ -1,0 +1,44 @@
+{
+  "policyMode": "real",
+  "policy": {
+    "schemaVersion": 1,
+    "defaultAction": "deny",
+    "rules": [
+      { "id": "allow-read", "action": "approve", "match": { "tool": "read_file" } }
+    ]
+  },
+  "cases": [
+    {
+      "name": "read is approved by explicit rule",
+      "decisionInput": {
+        "toolCallId": "t1",
+        "toolName": "read_file",
+        "mode": "assist",
+        "input": { "path": "tests/math.test.ts" },
+        "policyDigest": "sha256:fixture-default-deny"
+      },
+      "expected": {
+        "result": "approve",
+        "provenanceMode": "real",
+        "winningRuleId": "allow-read",
+        "evaluationOrder": ["allow-read"]
+      }
+    },
+    {
+      "name": "unknown tool is denied by explicit default action",
+      "decisionInput": {
+        "toolCallId": "t2",
+        "toolName": "stat_file",
+        "mode": "assist",
+        "input": { "path": "tests/math.test.ts" },
+        "policyDigest": "sha256:fixture-default-deny"
+      },
+      "expected": {
+        "result": "deny",
+        "provenanceMode": "real",
+        "winningRuleId": null,
+        "evaluationOrder": ["allow-read"]
+      }
+    }
+  ]
+}

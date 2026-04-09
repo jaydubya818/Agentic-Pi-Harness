@@ -5,17 +5,22 @@ import { join } from "node:path";
 import { diffDecisionLogs } from "../../src/replay/levelC.js";
 import { PolicyDecision } from "../../src/schemas/index.js";
 
-const mk = (id: string, result: "approve" | "deny" | "ask", ruleId: string | null): PolicyDecision => ({
+const mk = (
+  id: string,
+  result: "approve" | "deny" | "ask",
+  ruleId: string | null,
+  hookDecision: PolicyDecision["hookDecision"] = null,
+): PolicyDecision => ({
   schemaVersion: 1,
   toolCallId: id,
   result,
-  provenanceMode: "full",
+  provenanceMode: "real",
   modeInfluence: "assist",
   manifestInfluence: null,
   ruleEvaluation: ruleId ? [{ scope: "project", ruleId, matched: true, effect: result === "approve" ? "allow" : "deny" }] : [],
   evaluationOrder: ["r1", "r2"],
   winningRuleId: ruleId,
-  hookDecision: null,
+  hookDecision,
   mutatedByHook: false,
   approvalRequiredBy: result === "ask" ? "rule" : null,
   policyDigest: "sha256:policy-test",
@@ -50,5 +55,13 @@ describe("level-C decision drift", () => {
     const d = await diffDecisionLogs(a, b);
     expect(d.ok).toBe(false);
     expect(d.ruleMismatches).toHaveLength(1);
+  });
+
+  it("flags hookDecision drift", async () => {
+    const a = await tmpLog([mk("t1", "deny", "r1", { hookId: "hook-a", decision: "deny", reason: "blocked" })]);
+    const b = await tmpLog([mk("t1", "deny", "r1", { hookId: "hook-b", decision: "deny", reason: "blocked" })]);
+    const d = await diffDecisionLogs(a, b);
+    expect(d.ok).toBe(false);
+    expect(d.hookDecisionMismatches).toHaveLength(1);
   });
 });

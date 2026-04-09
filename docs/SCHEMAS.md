@@ -38,7 +38,7 @@ Each schema lives in `src/schemas/<name>.ts` and is re-exported from `src/schema
 
 ### Effect / policy / audit sidecars
 - `effectRecord.ts` — effect log record for mutating tool calls
-- `policyDecision.ts` — placeholder policy decision record used in Tier A
+- `policyDecision.ts` — persisted policy decision record supporting both `provenanceMode: "placeholder"` and `provenanceMode: "real"` without changing the outer artifact shape
 - `toolAuditRecord.ts` — tool audit record schema reserved for persisted tool-sidecar output
 - `sanitizationRecord.ts` — sanitization sidecar schema for tool-output containment metadata
 
@@ -82,7 +82,16 @@ Schema module:
 Written to:
 - `sessions/<sessionId>/policy.jsonl`
 
-Tier A uses placeholder approvals only.
+Tier A uses placeholder approvals only. Tier B Milestone 1 adds real policy decisions while preserving the same persisted field names and overall record shape.
+
+Current compatibility contract:
+- placeholder mode persists `provenanceMode: "placeholder"`
+- real mode persists `provenanceMode: "real"`
+- `result` remains `"approve" | "deny" | "ask"`
+- Tier B Milestone 2 may set `hookDecision` when a `PreToolUse` hook denies after base policy evaluation
+- `mutatedByHook` remains `false` in Milestone 2
+- `approvalRequiredBy` remains `null` in Milestone 2 hook mediation
+- no new artifact family or replay tape event type is introduced for hooks in Milestone 2
 
 Schema module:
 - `policyDecision.ts`
@@ -121,8 +130,8 @@ The Tier A rule is: **no unchecked deserialization for persisted contract data**
 
 ## Migration posture for Tier A
 
-Current Tier A posture is intentionally conservative:
-- no new migrator work is included in this release
+Current Tier A / early Tier B posture is intentionally conservative:
+- no new migrator work is included in this release line
 - replay/verification should **fail closed** on unsupported or invalid persisted data
 - migration is allowed **only if** a tested migrator exists
 

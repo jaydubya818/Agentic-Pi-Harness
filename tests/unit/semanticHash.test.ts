@@ -7,7 +7,7 @@ function decision(toolCallId: string, result: "approve" | "deny" | "ask", winnin
     schemaVersion: 1,
     toolCallId,
     result,
-    provenanceMode: "full",
+    provenanceMode: "real",
     modeInfluence: "assist",
     manifestInfluence: null,
     ruleEvaluation: winningRuleId ? [{ scope: "project", ruleId: winningRuleId, matched: true, effect: result === "approve" ? "allow" : "deny" }] : [],

@@ -92,6 +92,7 @@ export async function runGoldenPath(workdir: string, outRoot: string, opts: RunO
     checkpointPath: join(sessionDir, "checkpoint.json"),
     effectLogPath: effectLog,
     policyLogPath: policyLog,
+    policyMode: "placeholder",
     policyDigest,
     tracePath,
     tools: {

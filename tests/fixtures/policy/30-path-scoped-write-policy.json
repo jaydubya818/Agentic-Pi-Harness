@@ -1,0 +1,62 @@
+{
+  "policyMode": "real",
+  "policy": {
+    "schemaVersion": 1,
+    "defaultAction": "deny",
+    "rules": [
+      { "id": "allow-read", "action": "approve", "match": { "tool": "read_file" } },
+      { "id": "allow-tests-write", "action": "approve", "match": { "tool": "write_file", "pathPrefix": "tests/" } },
+      { "id": "deny-src-write", "action": "deny", "match": { "tool": "write_file", "pathPrefix": "src/" } }
+    ]
+  },
+  "cases": [
+    {
+      "name": "write under tests prefix is approved",
+      "decisionInput": {
+        "toolCallId": "t1",
+        "toolName": "write_file",
+        "mode": "assist",
+        "input": { "path": "tests/math.test.ts", "content": "patched" },
+        "policyDigest": "sha256:fixture-path"
+      },
+      "expected": {
+        "result": "approve",
+        "provenanceMode": "real",
+        "winningRuleId": "allow-tests-write",
+        "evaluationOrder": ["allow-read", "allow-tests-write", "deny-src-write"]
+      }
+    },
+    {
+      "name": "write under src prefix is denied",
+      "decisionInput": {
+        "toolCallId": "t2",
+        "toolName": "write_file",
+        "mode": "assist",
+        "input": { "path": "src/app.ts", "content": "patched" },
+        "policyDigest": "sha256:fixture-path"
+      },
+      "expected": {
+        "result": "deny",
+        "provenanceMode": "real",
+        "winningRuleId": "deny-src-write",
+        "evaluationOrder": ["allow-read", "allow-tests-write", "deny-src-write"]
+      }
+    },
+    {
+      "name": "read under src prefix is still approved",
+      "decisionInput": {
+        "toolCallId": "t3",
+        "toolName": "read_file",
+        "mode": "assist",
+        "input": { "path": "src/app.ts" },
+        "policyDigest": "sha256:fixture-path"
+      },
+      "expected": {
+        "result": "approve",
+        "provenanceMode": "real",
+        "winningRuleId": "allow-read",
+        "evaluationOrder": ["allow-read", "allow-tests-write", "deny-src-write"]
+      }
+    }
+  ]
+}

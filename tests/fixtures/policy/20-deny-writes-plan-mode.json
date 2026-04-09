@@ -1,0 +1,45 @@
+{
+  "policyMode": "real",
+  "policy": {
+    "schemaVersion": 1,
+    "defaultAction": "approve",
+    "rules": [
+      { "id": "allow-plan-read", "action": "approve", "match": { "tool": "read_file", "mode": "plan" } },
+      { "id": "deny-plan-write", "action": "deny", "match": { "tool": "write_file", "mode": "plan" } }
+    ]
+  },
+  "cases": [
+    {
+      "name": "plan read is approved",
+      "decisionInput": {
+        "toolCallId": "t1",
+        "toolName": "read_file",
+        "mode": "plan",
+        "input": { "path": "tests/math.test.ts" },
+        "policyDigest": "sha256:fixture-plan"
+      },
+      "expected": {
+        "result": "approve",
+        "provenanceMode": "real",
+        "winningRuleId": "allow-plan-read",
+        "evaluationOrder": ["allow-plan-read", "deny-plan-write"]
+      }
+    },
+    {
+      "name": "plan write is denied",
+      "decisionInput": {
+        "toolCallId": "t2",
+        "toolName": "write_file",
+        "mode": "plan",
+        "input": { "path": "tests/math.test.ts", "content": "patched" },
+        "policyDigest": "sha256:fixture-plan"
+      },
+      "expected": {
+        "result": "deny",
+        "provenanceMode": "real",
+        "winningRuleId": "deny-plan-write",
+        "evaluationOrder": ["allow-plan-read", "deny-plan-write"]
+      }
+    }
+  ]
+}

@@ -16,6 +16,13 @@ export interface DecisionDrift {
   resultMismatches: Array<{ toolCallId: string; recorded: string; replayed: string }>;
   ruleMismatches: Array<{ toolCallId: string; recorded: string | null; replayed: string | null }>;
   provenanceMismatches: Array<{ toolCallId: string; recorded: string; replayed: string }>;
+  hookDecisionMismatches: Array<{ toolCallId: string; recorded: string | null; replayed: string | null }>;
+}
+
+function hookSummary(decision: PolicyDecision): string | null {
+  if (!decision.hookDecision) return null;
+  const reason = decision.hookDecision.reason ? `:${decision.hookDecision.reason}` : "";
+  return `${decision.hookDecision.decision}@${decision.hookDecision.hookId}${reason}`;
 }
 
 async function load(path: string): Promise<Map<string, PolicyDecision>> {
@@ -34,7 +41,7 @@ export async function diffDecisionLogs(recordedPath: string, replayedPath: strin
   const b = await load(replayedPath);
   const drift: DecisionDrift = {
     ok: true, missing: [], extra: [],
-    resultMismatches: [], ruleMismatches: [], provenanceMismatches: [],
+    resultMismatches: [], ruleMismatches: [], provenanceMismatches: [], hookDecisionMismatches: [],
   };
   for (const [id, ra] of a) {
     const rb = b.get(id);
@@ -44,9 +51,11 @@ export async function diffDecisionLogs(recordedPath: string, replayedPath: strin
       drift.ruleMismatches.push({ toolCallId: id, recorded: ra.winningRuleId, replayed: rb.winningRuleId });
     if (ra.provenanceMode !== rb.provenanceMode)
       drift.provenanceMismatches.push({ toolCallId: id, recorded: ra.provenanceMode, replayed: rb.provenanceMode });
+    if (hookSummary(ra) !== hookSummary(rb))
+      drift.hookDecisionMismatches.push({ toolCallId: id, recorded: hookSummary(ra), replayed: hookSummary(rb) });
   }
   for (const id of b.keys()) if (!a.has(id)) drift.extra.push(id);
   drift.ok = !drift.missing.length && !drift.extra.length
-    && !drift.resultMismatches.length && !drift.ruleMismatches.length && !drift.provenanceMismatches.length;
+    && !drift.resultMismatches.length && !drift.ruleMismatches.length && !drift.provenanceMismatches.length && !drift.hookDecisionMismatches.length;
   return drift;
 }

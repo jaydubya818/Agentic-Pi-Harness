@@ -29,9 +29,9 @@ describe("loop integration: deny path + tape still verifies", () => {
 
     const policyDoc: PolicyDoc = {
       schemaVersion: 1,
-      default: "approve",
+      defaultAction: "approve",
       rules: [
-        { id: "deny-secrets", match: { tool: "read_file", pathPrefix: "/etc/" }, action: "deny" },
+        { id: "deny-secrets", action: "deny", match: { tool: "read_file", pathPrefix: "/etc/" } },
       ],
     };
 
@@ -48,6 +48,7 @@ describe("loop integration: deny path + tape still verifies", () => {
       effectLogPath: join(dir, "effects.jsonl"),
       policyLogPath: join(dir, "policy.jsonl"),
       policy: new PolicyEngine(policyDoc),
+      policyMode: "real",
       mode: "assist",
       concurrency: new ConcurrencyClassifier([
         { name: "read_file", class: "readonly" },

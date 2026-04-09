@@ -6,7 +6,7 @@ export const PolicyDecisionSchema = z.object({
   schemaVersion: z.literal(POLICY_DECISION_SCHEMA_VERSION),
   toolCallId: z.string(),
   result: z.enum(["approve", "deny", "ask"]),
-  provenanceMode: z.enum(["placeholder", "full"]),
+  provenanceMode: z.enum(["placeholder", "real"]),
   modeInfluence: z.enum(["plan", "assist", "autonomous", "worker", "dry-run"]),
   manifestInfluence: z.object({
     field: z.string(),
