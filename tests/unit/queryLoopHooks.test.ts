@@ -65,6 +65,8 @@ describe("query loop hook mediation", () => {
     expect(result.decisions[0].winningRuleId).toBe("allow-write");
     expect(result.decisions[0].hookDecision).toEqual({ hookId: "block-write", decision: "deny", reason: "review-required" });
     expect(result.effects).toHaveLength(0);
+    expect(result.compactedEvents).toEqual(result.events);
+    expect(result.compactions).toEqual([]);
     expect(await readFile(target, "utf8")).toBe("original\n");
     expect(result.events.at(-2)).toMatchObject({ type: "tool_result", isError: true });
     expect((result.events.at(-2) as Extract<StreamEvent, { type: "tool_result" }>).output).toContain("hook block-write");
@@ -117,6 +119,8 @@ describe("query loop hook mediation", () => {
     expect(result.decisions[0].result).toBe("approve");
     expect(result.decisions[0].hookDecision).toBeNull();
     expect(result.effects).toHaveLength(1);
+    expect(result.compactedEvents).toEqual(result.events);
+    expect(result.compactions).toEqual([]);
     expect(await readFile(target, "utf8")).toBe("patched\n");
     expect((await verifyTape(tapePath)).ok).toBe(true);
     const policyLog = await readPolicyLog(policyLogPath);

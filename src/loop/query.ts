@@ -14,6 +14,7 @@ import {
 import { wrapToolOutput } from "./promptAssembly.js";
 import { safeWriteJson } from "../session/provenance.js";
 import { PiHarnessError } from "../errors.js";
+import { compactHistory, CompactionRecord } from "../context/compaction.js";
 
 export type LoopMode = "plan" | "assist" | "autonomous" | "worker" | "dry-run";
 
@@ -44,7 +45,7 @@ export interface LoopResult {
   compactedEvents: StreamEvent[];
   effects: EffectRecord[];
   decisions: PolicyDecision[];
-  compactions: [];
+  compactions: CompactionRecord[];
   counters: Record<string, number>;
   cost: null;
 }
@@ -400,6 +401,18 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
     }
   }
 
+  let compactedEvents = events;
+  let compactions: CompactionRecord[] = [];
+  if (typeof inp.compactTargetBytes === "number") {
+    const compaction = compactHistory(events, { targetBytes: inp.compactTargetBytes });
+    compactedEvents = compaction.events;
+    if (compaction.record) {
+      compactions = [compaction.record];
+      counters.inc("compaction.applied");
+      counters.inc("compaction.tool_results", compaction.record.compactedToolCallIds.length);
+    }
+  }
+
   const checkpoint: Checkpoint = {
     schemaVersion: 1,
     sessionId: inp.sessionId,
@@ -412,10 +425,10 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
 
   return {
     events,
-    compactedEvents: events,
+    compactedEvents,
     effects,
     decisions,
-    compactions: [],
+    compactions,
     counters: counters.snapshot(),
     cost: null,
   };

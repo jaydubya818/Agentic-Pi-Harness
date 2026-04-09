@@ -63,6 +63,8 @@ describe("query loop", () => {
     expect(result.effects).toHaveLength(1);
     expect(result.decisions).toHaveLength(2);
     expect(result.decisions.every((decision) => decision.provenanceMode === "placeholder")).toBe(true);
+    expect(result.compactedEvents).toEqual(result.events);
+    expect(result.compactions).toEqual([]);
 
     const tapeVerification = await verifyTape(tapePath);
     expect(tapeVerification.ok).toBe(true);

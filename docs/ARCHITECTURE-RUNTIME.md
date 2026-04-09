@@ -46,7 +46,8 @@ Given a tool_use event, `PolicyEngine.decide()` produces a `PolicyDecision` with
 3. Records each event to the replay tape before any downstream handling.
 4. For `tool_use`, computes the base policy decision first, then applies Milestone 2 pre-hook mediation if hooks are configured.
 5. If approved, pre-snapshots paths, runs the tool once, captures an `EffectRecord` for mutating tools, runs observe-only post-hooks, wraps output via `wrapToolOutput`, and emits a `tool_result` event.
-6. Writes the loop-end checkpoint via `safeWriteJson`.
+6. Optionally derives a deterministic compacted runtime view from the recorded event history when `compactTargetBytes` is supplied and the emitted history exceeds that threshold.
+7. Writes the loop-end checkpoint via `safeWriteJson`.
 
 Retry rules in the current release line:
 - disabled unless explicit `retry` config is supplied
@@ -55,7 +56,14 @@ Retry rules in the current release line:
 - once one event from the current model invocation is durably written, retry is no longer allowed for that invocation
 - tool execution, policy decisions, hook decisions, schema/parse failures, and persistence failures remain fail-closed / non-retryable in this milestone
 
-**Invariant.** The loop never writes to the filesystem except via Layer + recorders and `safeWriteJson`. Successful retries before the first persisted event are invisible in tape shape; once an event is written, the invocation is committed and will not be retried.
+Compaction rules in the current release line:
+- disabled unless `compactTargetBytes` is explicitly supplied
+- tape history remains the source of truth
+- compaction rewrites only the runtime `compactedEvents` view, never the historical `events` list or the tape
+- the first and only strategy in Milestone 4 is deterministic tool-result body compaction
+- policy logs, effect logs, provenance, checkpoint shape, and canonical goldens are unaffected
+
+**Invariant.** The loop never writes to the filesystem except via Layer + recorders and `safeWriteJson`. Successful retries before the first persisted event are invisible in tape shape; once an event is written, the invocation is committed and will not be retried. Compaction may change the runtime context view, but it never mutates historical tape truth.
 
 ## Layer 5 — Session & Provenance (`src/session/`)
 
@@ -96,6 +104,9 @@ model.stream() ──► [optional retry only before first persisted event]
                                │
                                ▼
                       wrapToolOutput ──► tool_result ──► tape
+                                                       │
+                                                       ▼
+                                  compactedEvents runtime view (optional, derived)
 ```
 
 ## What's not in the runtime (by design)

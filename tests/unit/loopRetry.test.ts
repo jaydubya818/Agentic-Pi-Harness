@@ -143,6 +143,8 @@ describe("query loop retry", () => {
     ]);
     expect(result.decisions).toHaveLength(1);
     expect(result.effects).toHaveLength(1);
+    expect(result.compactedEvents).toEqual(result.events);
+    expect(result.compactions).toEqual([]);
     expect(result.counters["retry.attempted"]).toBe(1);
     expect(result.counters["retry.succeeded"]).toBe(1);
     expect(await readFile(target, "utf8")).toBe("patched\n");
@@ -283,6 +285,8 @@ describe("query loop retry", () => {
 
     expect(model.invocationCount).toBe(2);
     expect(toolCalls).toBe(1);
+    expect(result.compactedEvents).toEqual(result.events);
+    expect(result.compactions).toEqual([]);
     expect(result.events.at(-2)).toMatchObject({ type: "tool_result", isError: true });
     await expect(readEffectLog(join(dir, "effects.jsonl"))).rejects.toMatchObject({ code: "E_SCHEMA_PARSE" });
   });

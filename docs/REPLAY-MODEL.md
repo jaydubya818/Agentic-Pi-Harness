@@ -27,6 +27,8 @@ The stream of `PolicyDecision`, hook-mediated deny outcomes, and tool-routing ch
 
 Milestone 3 retry semantics do **not** introduce a new persisted retry artifact or replay tape event type. Successful retries before the first persisted event of a model invocation are intentionally invisible in tape shape; failed retries leave the tape valid up to the last durable record.
 
+Milestone 4 compaction semantics do **not** mutate tape truth. Compaction only derives a reduced runtime view (`compactedEvents`) from the already-recorded event history. Replay continues to read the authoritative tape / `events` history, not the compacted runtime view.
+
 Placeholder decisions (`provenanceMode: "placeholder"`) are tolerated against full decisions during Phase 1–2; after Phase 3 this becomes a hard diff.
 
 ## Migration posture
@@ -65,6 +67,16 @@ Retryable scope in this release line is intentionally narrow:
 - no mid-stream resumption after persisted output
 
 That means replay stays compatible with the existing tape/effect/policy contracts: a successful retried invocation produces the same persisted sequence as a first-try success.
+
+## Compaction compatibility
+
+Milestone 4 keeps compaction compatible with existing replay and inspection surfaces:
+- no new persisted artifact family
+- no new replay tape event type
+- no mutation of historical tape records after emit
+- no compaction of policy logs, effect logs, provenance, or canonical goldens
+
+The compacted runtime view is deterministic from the event history plus `compactTargetBytes`. Same history + same threshold => same compacted result.
 
 ## Hash chain
 
