@@ -161,3 +161,7 @@ Rule:
 - if files under `src/schemas/` change, `docs/SCHEMAS.md` must be updated and staged in the same commit
 
 This release uses that guard as a documentation-alignment check for the Tier A contract.
+
+## Sofie phase note
+- Re-exported Sofie authority types from `src/schemas/index.ts`.
+- No persisted artifact outer shape changed.

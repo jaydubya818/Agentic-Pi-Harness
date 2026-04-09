@@ -25,6 +25,7 @@ import {
   requestApprovalDecision,
 } from "../approvals/runtime.js";
 import { evaluateWorkerToolUse, validateWorkerModeInputs, WorkerModeControls } from "../runtime/workerControls.js";
+import { SofieAnswer, SofieContext, SofieToolEvidence, answerRoutineQuestion, makeApprovalSummaries } from "../sofie/authority.js";
 
 export type LoopMode = "plan" | "assist" | "autonomous" | "worker" | "dry-run";
 type ToolUseEvent = Extract<StreamEvent, { type: "tool_use" }>;
@@ -50,6 +51,12 @@ export interface LoopInputs {
   concurrency?: ConcurrencyClassifier;
   compactTargetBytes?: number;
   workerControls?: WorkerModeControls;
+  sofie?: {
+    enabled: boolean;
+    question?: string;
+    kind?: SofieContext["kind"];
+    frictionFindings?: string[];
+  };
   counters?: unknown;
   costTable?: unknown;
 }
@@ -62,6 +69,7 @@ export interface LoopResult {
   compactions: CompactionRecord[];
   approvalPackets: ApprovalPacket[];
   approvalDecisions: ApprovalDecision[];
+  sofieAnswer: SofieAnswer | null;
   counters: Record<string, number>;
   cost: null;
 }
@@ -587,6 +595,29 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
   };
   await safeWriteJson(inp.checkpointPath, checkpoint);
 
+  const sofieToolEvidence: SofieToolEvidence[] = decisions.map((decision) => ({
+    toolCallId: decision.toolCallId,
+    toolName: events.find((event): event is ToolUseEvent => event.type === "tool_use" && event.id === decision.toolCallId)?.name ?? "unknown",
+    result: decision.result,
+    paths: effects.find((effect) => effect.toolCallId === decision.toolCallId)?.paths ?? [],
+  }));
+
+  const sofieAnswer = inp.sofie?.enabled
+    ? answerRoutineQuestion({
+        sessionId: inp.sessionId,
+        mode,
+        question: inp.sofie.question ?? "Provide bounded internal operator guidance.",
+        kind: inp.sofie.kind ?? "operator",
+        tapeEventTypes: events.map((event) => event.type),
+        effects,
+        decisions,
+        toolEvidence: sofieToolEvidence,
+        approvals: makeApprovalSummaries(approvalDecisions),
+        provenance: { policyDigest: inp.policyDigest ?? null },
+        frictionFindings: inp.sofie.frictionFindings,
+      })
+    : null;
+
   return {
     events,
     compactedEvents,
@@ -595,6 +626,7 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
     compactions,
     approvalPackets,
     approvalDecisions,
+    sofieAnswer,
     counters: counters.snapshot(),
     cost: null,
   };

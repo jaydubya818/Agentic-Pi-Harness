@@ -257,3 +257,4 @@ See also:
 - [`docs/GOLDEN-PATH.md`](docs/GOLDEN-PATH.md)
 - [`docs/REPLAY-MODEL.md`](docs/REPLAY-MODEL.md)
 - [`docs/SCHEMAS.md`](docs/SCHEMAS.md)
+- [`docs/SOFIE-CONTRACT.md`](docs/SOFIE-CONTRACT.md)

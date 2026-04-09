@@ -9,3 +9,4 @@ export * from "./sessionContext.js";
 export * from "./streamEvent.js";
 export * from "./tapeRecord.js";
 export * from "./toolAuditRecord.js";
+export * from "../sofie/authority.js";
