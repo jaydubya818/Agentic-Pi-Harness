@@ -51,6 +51,8 @@ describe("loop: per-call EffectScope isolates same-path concurrent writes", () =
     });
 
     expect(result.effects).toHaveLength(2);
+    expect(result.compactedEvents).toEqual(result.events);
+    expect(result.compactions).toEqual([]);
     const [r1, r2] = result.effects;
 
     // First call: pre = original "v0\n"

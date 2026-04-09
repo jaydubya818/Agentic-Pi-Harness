@@ -15,8 +15,10 @@ import { wrapToolOutput } from "./promptAssembly.js";
 import { safeWriteJson } from "../session/provenance.js";
 import { PiHarnessError } from "../errors.js";
 import { compactHistory, CompactionRecord } from "../context/compaction.js";
+import { ConcurrencyClassifier, scheduleCalls, ScheduledCall } from "../tools/concurrency.js";
 
 export type LoopMode = "plan" | "assist" | "autonomous" | "worker" | "dry-run";
+type ToolUseEvent = Extract<StreamEvent, { type: "tool_use" }>;
 
 export interface LoopInputs {
   sessionId: string;
@@ -34,7 +36,7 @@ export interface LoopInputs {
   tracePath?: string;
   hooks?: RegisteredToolHook[];
   retry?: { maxAttempts: number; baseDelayMs: number; maxDelayMs: number };
-  concurrency?: unknown;
+  concurrency?: ConcurrencyClassifier;
   compactTargetBytes?: number;
   counters?: unknown;
   costTable?: unknown;
@@ -48,6 +50,13 @@ export interface LoopResult {
   compactions: CompactionRecord[];
   counters: Record<string, number>;
   cost: null;
+}
+
+interface PreparedToolDispatch {
+  toolEvent: ToolUseEvent;
+  order: number;
+  immediateResult?: StreamEvent;
+  scheduledCall?: ScheduledCall<StreamEvent>;
 }
 
 function createCounters() {
@@ -155,96 +164,39 @@ function retryFailureCounterKey(input: {
     : "retry.fail_closed";
 }
 
-async function processEvent(
+function resolveConcurrencyClassifier(value: LoopInputs["concurrency"]): ConcurrencyClassifier | null {
+  return value instanceof ConcurrencyClassifier ? value : null;
+}
+
+function deniedToolResult(event: ToolUseEvent, decision: PolicyDecision): StreamEvent {
+  const deniedByHook = decision.hookDecision ? ` (hook ${decision.hookDecision.hookId})` : "";
+  return {
+    type: "tool_result",
+    schemaVersion: 1,
+    id: event.id,
+    output: `denied by policy${decision.winningRuleId ? ` (${decision.winningRuleId})` : ""}${deniedByHook}`,
+    isError: true,
+  };
+}
+
+function unknownToolResult(event: ToolUseEvent): StreamEvent {
+  return {
+    type: "tool_result",
+    schemaVersion: 1,
+    id: event.id,
+    output: `unknown tool: ${event.name}`,
+    isError: true,
+  };
+}
+
+async function executeApprovedTool(
   inp: LoopInputs,
   mode: LoopMode,
   counters: ReturnType<typeof createCounters>,
-  events: StreamEvent[],
   effects: EffectRecord[],
-  decisions: PolicyDecision[],
-  event: StreamEvent,
-): Promise<{ messageStarted: boolean; stopReason: string | null }> {
-  await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, event);
-
-  if (event.type === "message_start") {
-    return { messageStarted: true, stopReason: null };
-  }
-
-  if (event.type === "message_stop") {
-    return { messageStarted: false, stopReason: event.stopReason };
-  }
-
-  if (event.type !== "tool_use") {
-    return { messageStarted: false, stopReason: null };
-  }
-
-  const baseDecision = decidePolicy({
-    policyMode: inp.policyMode,
-    policy: inp.policy,
-    toolCallId: event.id,
-    toolName: event.name,
-    mode,
-    input: event.input,
-    policyDigest: inp.policyDigest,
-  });
-
-  let decision = baseDecision;
-  if (decision.result !== "deny" && inp.hooks?.length) {
-    const preHook = await dispatchPreToolHooks(inp.hooks, {
-      event: "PreToolUse",
-      sessionId: inp.sessionId,
-      turnIndex: 0,
-      payload: {
-        toolCallId: event.id,
-        toolName: event.name,
-        mode,
-        input: event.input,
-        baseDecision: {
-          result: baseDecision.result,
-          provenanceMode: baseDecision.provenanceMode,
-          winningRuleId: baseDecision.winningRuleId,
-        },
-      },
-    });
-    if (preHook.deniedBy) {
-      decision = mergeHookDeniedDecision(baseDecision, preHook.deniedBy);
-    }
-  }
-
-  decisions.push(decision);
-  await appendPolicyDecision(inp.policyLogPath, decision);
-  counters.inc(`policy.${decision.result}`);
-
-  let toolResult: StreamEvent;
-
-  if (decision.result === "deny") {
-    counters.inc("tool.denied");
-    const deniedByHook = decision.hookDecision ? ` (hook ${decision.hookDecision.hookId})` : "";
-    toolResult = {
-      type: "tool_result",
-      schemaVersion: 1,
-      id: event.id,
-      output: `denied by policy${decision.winningRuleId ? ` (${decision.winningRuleId})` : ""}${deniedByHook}`,
-      isError: true,
-    };
-    await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
-    return { messageStarted: false, stopReason: null };
-  }
-
+  event: ToolUseEvent,
+): Promise<StreamEvent> {
   const tool = inp.tools[event.name];
-  if (!tool) {
-    counters.inc("tool.unknown");
-    toolResult = {
-      type: "tool_result",
-      schemaVersion: 1,
-      id: event.id,
-      output: `unknown tool: ${event.name}`,
-      isError: true,
-    };
-    await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
-    return { messageStarted: false, stopReason: null };
-  }
-
   let rawOutput = "";
   let isError = false;
 
@@ -305,16 +257,158 @@ async function processEvent(
     maxBytes: 64 * 1024,
   });
 
-  toolResult = {
+  return {
     type: "tool_result",
     schemaVersion: 1,
     id: event.id,
     output: wrapped,
     isError,
   };
-  await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
+}
 
+async function prepareToolDispatch(
+  inp: LoopInputs,
+  mode: LoopMode,
+  counters: ReturnType<typeof createCounters>,
+  effects: EffectRecord[],
+  decisions: PolicyDecision[],
+  event: ToolUseEvent,
+  order: number,
+): Promise<PreparedToolDispatch> {
+  const baseDecision = decidePolicy({
+    policyMode: inp.policyMode,
+    policy: inp.policy,
+    toolCallId: event.id,
+    toolName: event.name,
+    mode,
+    input: event.input,
+    policyDigest: inp.policyDigest,
+  });
+
+  let decision = baseDecision;
+  if (decision.result !== "deny" && inp.hooks?.length) {
+    const preHook = await dispatchPreToolHooks(inp.hooks, {
+      event: "PreToolUse",
+      sessionId: inp.sessionId,
+      turnIndex: 0,
+      payload: {
+        toolCallId: event.id,
+        toolName: event.name,
+        mode,
+        input: event.input,
+        baseDecision: {
+          result: baseDecision.result,
+          provenanceMode: baseDecision.provenanceMode,
+          winningRuleId: baseDecision.winningRuleId,
+        },
+      },
+    });
+    if (preHook.deniedBy) {
+      decision = mergeHookDeniedDecision(baseDecision, preHook.deniedBy);
+    }
+  }
+
+  decisions.push(decision);
+  await appendPolicyDecision(inp.policyLogPath, decision);
+  counters.inc(`policy.${decision.result}`);
+
+  if (decision.result === "deny") {
+    counters.inc("tool.denied");
+    return {
+      toolEvent: event,
+      order,
+      immediateResult: deniedToolResult(event, decision),
+    };
+  }
+
+  const tool = inp.tools[event.name];
+  if (!tool) {
+    counters.inc("tool.unknown");
+    return {
+      toolEvent: event,
+      order,
+      immediateResult: unknownToolResult(event),
+    };
+  }
+
+  return {
+    toolEvent: event,
+    order,
+    scheduledCall: {
+      id: event.id,
+      name: event.name,
+      order,
+      run: () => executeApprovedTool(inp, mode, counters, effects, event),
+    },
+  };
+}
+
+async function emitNonToolEvent(
+  inp: LoopInputs,
+  counters: ReturnType<typeof createCounters>,
+  events: StreamEvent[],
+  event: Exclude<StreamEvent, { type: "tool_use" }>,
+): Promise<{ messageStarted: boolean; stopReason: string | null }> {
+  await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, event);
+  if (event.type === "message_start") {
+    return { messageStarted: true, stopReason: null };
+  }
+  if (event.type === "message_stop") {
+    return { messageStarted: false, stopReason: event.stopReason };
+  }
   return { messageStarted: false, stopReason: null };
+}
+
+async function flushPendingToolUses(
+  inp: LoopInputs,
+  mode: LoopMode,
+  counters: ReturnType<typeof createCounters>,
+  events: StreamEvent[],
+  effects: EffectRecord[],
+  decisions: PolicyDecision[],
+  pendingToolUses: ToolUseEvent[],
+): Promise<void> {
+  if (pendingToolUses.length === 0) return;
+
+  const prepared: PreparedToolDispatch[] = [];
+  for (let index = 0; index < pendingToolUses.length; index++) {
+    prepared.push(await prepareToolDispatch(inp, mode, counters, effects, decisions, pendingToolUses[index], index));
+  }
+
+  const scheduled = prepared
+    .filter((entry): entry is PreparedToolDispatch & { scheduledCall: ScheduledCall<StreamEvent> } => !!entry.scheduledCall)
+    .map((entry) => entry.scheduledCall);
+
+  const scheduledResults = new Map<string, StreamEvent>();
+  if (scheduled.length > 0) {
+    const classifier = resolveConcurrencyClassifier(inp.concurrency);
+    if (classifier) {
+      const results = await scheduleCalls(scheduled, classifier);
+      for (const scheduledResult of results) {
+        if (scheduledResult.result.status === "rejected") {
+          throw scheduledResult.result.reason;
+        }
+        scheduledResults.set(scheduledResult.call.id, scheduledResult.result.value);
+      }
+    } else {
+      for (const call of scheduled) {
+        scheduledResults.set(call.id, await call.run());
+      }
+    }
+  }
+
+  for (const entry of prepared) {
+    const toolResult = entry.immediateResult ?? scheduledResults.get(entry.toolEvent.id);
+    if (!toolResult) {
+      throw new PiHarnessError("E_UNKNOWN", "scheduled tool result missing", {
+        toolCallId: entry.toolEvent.id,
+        toolName: entry.toolEvent.name,
+      });
+    }
+    await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
+  }
+
+  pendingToolUses.length = 0;
 }
 
 export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
@@ -323,6 +417,7 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
   const events: StreamEvent[] = [];
   const effects: EffectRecord[] = [];
   const decisions: PolicyDecision[] = [];
+  const pendingToolUses: ToolUseEvent[] = [];
   let messageCount = 0;
   let stopReason: string | null = null;
 
@@ -384,19 +479,28 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
       }
 
       if (next.done) {
+        await flushPendingToolUses(inp, mode, counters, events, effects, decisions, pendingToolUses);
         completed = true;
         if (retried) counters.inc("retry.succeeded");
         break;
       }
 
       const event = next.value;
-      const result = await processEvent(inp, mode, counters, events, effects, decisions, event);
+      if (event.type === "tool_use") {
+        await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, event);
+        pendingToolUses.push(event);
+        currentInvocationPersistedEvent = true;
+        continue;
+      }
+
+      await flushPendingToolUses(inp, mode, counters, events, effects, decisions, pendingToolUses);
+      const nonTool = await emitNonToolEvent(inp, counters, events, event);
       currentInvocationPersistedEvent = true;
-      if (result.messageStarted) {
+      if (nonTool.messageStarted) {
         messageCount += 1;
       }
-      if (result.stopReason) {
-        stopReason = result.stopReason;
+      if (nonTool.stopReason) {
+        stopReason = nonTool.stopReason;
       }
     }
   }

@@ -1,15 +1,3 @@
-/**
- * Streaming tool concurrency classification. Mirrors Claude Code's three
- * classes so a sequence of tool_use events can be scheduled correctly:
- *
- *   - readonly   : may run in parallel with any other readonly tool
- *   - serial     : must run one at a time per tool name (same-name queue)
- *   - exclusive  : drains the pipeline; nothing runs before or after until done
- *
- * Classification is declarative. The executor consults the classifier before
- * dispatching each call.
- */
-
 export type ToolClass = "readonly" | "serial" | "exclusive";
 
 export interface ToolManifestEntry {
@@ -19,44 +7,107 @@ export interface ToolManifestEntry {
 
 export class ConcurrencyClassifier {
   private map = new Map<string, ToolClass>();
+
   constructor(entries: ToolManifestEntry[]) {
-    for (const e of entries) this.map.set(e.name, e.class);
+    for (const entry of entries) this.map.set(entry.name, entry.class);
   }
+
   classify(toolName: string): ToolClass {
-    return this.map.get(toolName) ?? "serial"; // default to safest non-exclusive
+    return this.map.get(toolName) ?? "serial";
   }
 }
 
-export interface PendingCall { id: string; name: string; run: () => Promise<void>; }
+export interface PendingCall {
+  id: string;
+  name: string;
+  run: () => Promise<void>;
+}
 
-/**
- * Schedule a batch of pending calls honoring the concurrency classes.
- * Returns when every call has settled.
- */
-export async function schedule(calls: PendingCall[], cc: ConcurrencyClassifier): Promise<void> {
-  const serialLocks = new Map<string, Promise<void>>();
-  const all: Promise<void>[] = [];
-  let pipelineDrain: Promise<void> = Promise.resolve();
+export interface ScheduledCall<T> {
+  id: string;
+  name: string;
+  order: number;
+  run: () => Promise<T>;
+}
 
-  for (const call of calls) {
-    const cls = cc.classify(call.name);
-    if (cls === "exclusive") {
-      const snapshot = all.slice();
-      pipelineDrain = pipelineDrain
-        .then(() => Promise.allSettled(snapshot))
-        .then(() => call.run());
-      all.push(pipelineDrain);
+export interface ClassifiedCall<T> extends ScheduledCall<T> {
+  class: ToolClass;
+}
+
+export interface ExecutionGroup<T> {
+  class: ToolClass;
+  calls: ClassifiedCall<T>[];
+}
+
+export interface ScheduledResult<T> {
+  call: ClassifiedCall<T>;
+  result: PromiseSettledResult<T>;
+}
+
+export function classifyToolCall<T>(call: ScheduledCall<T>, classifier: ConcurrencyClassifier): ClassifiedCall<T> {
+  return {
+    ...call,
+    class: classifier.classify(call.name),
+  };
+}
+
+export function classifyToolCalls<T>(calls: ScheduledCall<T>[], classifier: ConcurrencyClassifier): ClassifiedCall<T>[] {
+  return calls.map((call) => classifyToolCall(call, classifier));
+}
+
+export function buildExecutionPlan<T>(calls: ClassifiedCall<T>[]): ExecutionGroup<T>[] {
+  const ordered = [...calls].sort((a, b) => a.order - b.order);
+  const groups: ExecutionGroup<T>[] = [];
+  let readonlyGroup: ClassifiedCall<T>[] = [];
+
+  const flushReadonly = () => {
+    if (readonlyGroup.length === 0) return;
+    groups.push({ class: "readonly", calls: readonlyGroup });
+    readonlyGroup = [];
+  };
+
+  for (const call of ordered) {
+    if (call.class === "readonly") {
+      readonlyGroup.push(call);
       continue;
     }
-    if (cls === "serial") {
-      const prev = serialLocks.get(call.name) ?? Promise.resolve();
-      const next = prev.then(() => call.run());
-      serialLocks.set(call.name, next);
-      all.push(next);
-      continue;
-    }
-    // readonly
-    all.push(pipelineDrain.then(() => call.run()));
+
+    flushReadonly();
+    groups.push({ class: call.class, calls: [call] });
   }
-  await Promise.allSettled(all);
+
+  flushReadonly();
+  return groups;
+}
+
+export async function scheduleCalls<T>(calls: ScheduledCall<T>[], classifier: ConcurrencyClassifier): Promise<ScheduledResult<T>[]> {
+  const results: ScheduledResult<T>[] = [];
+  const plan = buildExecutionPlan(classifyToolCalls(calls, classifier));
+
+  for (const group of plan) {
+    if (group.class === "readonly") {
+      const settled = await Promise.allSettled(group.calls.map((call) => call.run()));
+      for (let index = 0; index < group.calls.length; index++) {
+        results.push({ call: group.calls[index], result: settled[index] });
+      }
+      continue;
+    }
+
+    const call = group.calls[0];
+    const [settled] = await Promise.allSettled([call.run()]);
+    results.push({ call, result: settled });
+  }
+
+  return results.sort((a, b) => a.call.order - b.call.order);
+}
+
+export async function schedule(calls: PendingCall[], classifier: ConcurrencyClassifier): Promise<void> {
+  const scheduledCalls: ScheduledCall<void>[] = calls.map((call, index) => ({
+    id: call.id,
+    name: call.name,
+    order: index,
+    run: call.run,
+  }));
+
+  await scheduleCalls(scheduledCalls, classifier);
 }

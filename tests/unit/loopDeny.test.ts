@@ -68,6 +68,8 @@ describe("loop integration: deny path + tape still verifies", () => {
     expect(result.decisions[0].result).toBe("deny");
     expect(result.decisions[0].winningRuleId).toBe("deny-secrets");
     expect(result.decisions[1].result).toBe("approve");
+    expect(result.compactedEvents).toEqual(result.events);
+    expect(result.compactions).toEqual([]);
 
     // Effects: only the approved write produced one
     expect(result.effects).toHaveLength(1);
