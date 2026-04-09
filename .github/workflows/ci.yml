@@ -21,7 +21,7 @@ jobs:
       - name: npm audit (high+ only)
         run: npm audit --audit-level=high || exit 1
 
-  golden-path:
+  golden-proof:
     runs-on: ubuntu-latest
     needs: test
     steps:
@@ -31,42 +31,27 @@ jobs:
           node-version: "20"
           cache: "npm"
       - run: npm ci || npm install
-      - run: npx tsx src/cli/run.ts ./.pi-work ./.pi-out
-      - name: verify tape hash chain
+      - name: verify committed golden tape
+        run: npx tsx src/cli/verify.ts ./goldens/canonical/tape.jsonl
+      - name: replay committed golden tape
+        run: npx tsx src/cli/replay.ts ./goldens/canonical/tape.jsonl
+      - name: run canonical golden path
         run: |
-          TAPE=$(ls ./.pi-out/tapes/*.jsonl | head -1)
-          npx tsx src/cli/verify.ts "$TAPE"
-      - name: replay pretty-print
+          rm -rf ./.golden/work ./.golden/out
+          npx tsx src/cli/run.ts ./.golden/work ./.golden/out
+      - name: compare Level A tape events against committed golden
         run: |
-          TAPE=$(ls ./.pi-out/tapes/*.jsonl | head -1)
-          npx tsx src/cli/replay.ts "$TAPE"
-
-  replay-drift:
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-      - run: npm ci || npm install
-      - name: first run
-        run: npx tsx src/cli/run.ts ./.pi-work1 ./.pi-out1
-      - name: second run
-        run: npx tsx src/cli/run.ts ./.pi-work2 ./.pi-out2
-      - name: compare effect logs
+          TAPE=$(find ./.golden/out/tapes -name '*.jsonl' | head -1)
+          npx tsx scripts/compare-tape-events.ts "$TAPE" ./goldens/canonical/tape.jsonl
+      - name: compare Level B effects against committed golden
         run: |
-          F1=$(ls ./.pi-out1/effects/*.jsonl | head -1)
-          F2=$(ls ./.pi-out2/effects/*.jsonl | head -1)
-          node scripts/compare-effects.mjs "$F1" "$F2"
-      - name: compare decision logs (exact)
+          EFFECT=$(find ./.golden/out/effects -name '*.jsonl' | head -1)
+          node scripts/compare-effects.mjs "$EFFECT" ./goldens/canonical/effects.jsonl
+      - name: compare Level C decisions against committed golden (exact)
         run: |
-          D1=$(ls ./.pi-out1/sessions/*/policy.jsonl | head -1)
-          D2=$(ls ./.pi-out2/sessions/*/policy.jsonl | head -1)
-          node scripts/compare-decisions.mjs "$D1" "$D2"
-      - name: compare decision logs (semantic)
+          POLICY=$(find ./.golden/out/sessions -name 'policy.jsonl' | head -1)
+          node scripts/compare-decisions.mjs "$POLICY" ./goldens/canonical/policy.jsonl
+      - name: compare Level C decisions against committed golden (semantic)
         run: |
-          D1=$(ls ./.pi-out1/sessions/*/policy.jsonl | head -1)
-          D2=$(ls ./.pi-out2/sessions/*/policy.jsonl | head -1)
-          node scripts/compare-decisions.mjs --semantic "$D1" "$D2"
+          POLICY=$(find ./.golden/out/sessions -name 'policy.jsonl' | head -1)
+          node scripts/compare-decisions.mjs --semantic "$POLICY" ./goldens/canonical/policy.jsonl

@@ -2,9 +2,9 @@
 /**
  * Schema-drift guard.
  *
- * Rule: every change to src/schemas/index.ts must be accompanied by a
- * corresponding change to docs/SCHEMAS.md in the same commit. If the
- * schema file changed but the docs file did not, abort the commit.
+ * Rule: every change to a file under src/schemas/ must be accompanied by a
+ * corresponding change to docs/SCHEMAS.md in the same commit. If schema
+ * files changed but the docs file did not, abort the commit.
  *
  * This is a blunt but effective guardrail — it forces the schema version
  * policy (bump schemaVersion, write a migration note) to happen at the
@@ -18,11 +18,11 @@ function staged() {
 }
 
 const files = staged();
-const schemaTouched = files.has("src/schemas/index.ts");
+const schemaTouched = [...files].some((file) => file.startsWith("src/schemas/") && file.endsWith(".ts"));
 const docsTouched = files.has("docs/SCHEMAS.md");
 
 if (schemaTouched && !docsTouched) {
-  console.error("✖ schema-drift: src/schemas/index.ts changed but docs/SCHEMAS.md did not.");
+  console.error("✖ schema-drift: files under src/schemas/ changed but docs/SCHEMAS.md did not.");
   console.error("  Bump schemaVersion and record the migration in docs/SCHEMAS.md, then re-stage.");
   process.exit(1);
 }

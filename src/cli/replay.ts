@@ -1,5 +1,25 @@
-import { readFile } from "node:fs/promises";
-import { verifyTape } from "./verify.js";
+import { readTape, verifyTape } from "../replay/recorder.js";
+import { TapeRecord } from "../schemas/index.js";
+
+function renderRecord(record: TapeRecord, index: number): string {
+  if (record.type === "header") {
+    return `# header session=${record.sessionId} policy=${record.policyDigest}`;
+  }
+
+  const event = record.event;
+  switch (event.type) {
+    case "message_start":
+      return `[${index}] message_start`;
+    case "text_delta":
+      return `[${index}] text: ${JSON.stringify(event.text)}`;
+    case "tool_use":
+      return `[${index}] tool_use ${event.name}#${event.id} ${JSON.stringify(event.input)}`;
+    case "tool_result":
+      return `[${index}] tool_result #${event.id} ${event.isError ? "ERR " : ""}${event.output.slice(0, 80)}`;
+    case "message_stop":
+      return `[${index}] message_stop (${event.stopReason})`;
+  }
+}
 
 /**
  * `pi-harness replay <tape.jsonl>` — verifies the hash chain, then pretty-
@@ -7,35 +27,25 @@ import { verifyTape } from "./verify.js";
  * doubles as a CI guard.
  */
 export async function replayTape(path: string): Promise<number> {
-  const v = await verifyTape(path);
-  if (!v.ok) {
-    console.error(`FAIL: ${v.error}`);
+  const verification = await verifyTape(path);
+  if (!verification.ok) {
+    console.error(`FAIL: ${verification.error}`);
     return 1;
   }
-  const raw = await readFile(path, "utf8");
-  const lines = raw.split("\n").filter(Boolean);
-  for (let i = 0; i < lines.length; i++) {
-    const rec = JSON.parse(lines[i]);
-    if (rec.type === "header") {
-      console.log(`# header session=${rec.sessionId} policy=${rec.policyDigest}`);
-      continue;
-    }
-    const e = rec.event;
-    switch (e?.type) {
-      case "message_start": console.log(`[${i}] message_start`); break;
-      case "text_delta":    console.log(`[${i}] text: ${JSON.stringify(e.text)}`); break;
-      case "tool_use":      console.log(`[${i}] tool_use ${e.name}#${e.id} ${JSON.stringify(e.input)}`); break;
-      case "tool_result":   console.log(`[${i}] tool_result #${e.id} ${e.isError ? "ERR " : ""}${e.output.slice(0, 80)}`); break;
-      case "message_stop":  console.log(`[${i}] message_stop (${e.stopReason})`); break;
-      default:              console.log(`[${i}] ${JSON.stringify(e)}`);
-    }
-  }
-  console.log(`ok ${v.records} records digest=${v.digest}`);
+
+  const records = await readTape(path);
+  records.forEach((record, index) => {
+    console.log(renderRecord(record, index));
+  });
+  console.log(`ok ${verification.records} records digest=${verification.digest}`);
   return 0;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const p = process.argv[2];
-  if (!p) { console.error("usage: replay <tape.jsonl>"); process.exit(2); }
-  replayTape(p).then((code) => process.exit(code));
+  const tapePath = process.argv[2];
+  if (!tapePath) {
+    console.error("usage: replay <tape.jsonl>");
+    process.exit(2);
+  }
+  replayTape(tapePath).then((code) => process.exit(code));
 }

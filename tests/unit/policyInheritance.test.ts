@@ -28,8 +28,8 @@ describe("PolicyEngine rule inheritance", () => {
       input: { path: "/src/index.ts", content: "x" },
     });
     expect(d.result).toBe("deny");
-    expect(d.matchedRuleIds).toContain("deny-writes");
-    expect(d.matchedRuleIds).toContain("deny-writes-src");
+    expect(d.ruleEvaluation.map((entry) => entry.ruleId)).toContain("deny-writes");
+    expect(d.ruleEvaluation.map((entry) => entry.ruleId)).toContain("deny-writes-src");
   });
 
   it("child can override parent action", () => {

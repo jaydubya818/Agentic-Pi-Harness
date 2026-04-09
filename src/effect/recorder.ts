@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
-import { EffectRecord } from "../schemas/index.js";
+import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
+import { dirname } from "node:path";
+import { EffectRecord, EffectRecordSchema, parseOrThrow } from "../schemas/index.js";
 import { PiHarnessError } from "../errors.js";
 
 async function hashFile(path: string): Promise<string | null> {
@@ -74,6 +75,10 @@ function lcsDiff(a: string[], b: string[]): DiffOp[] {
 
 type PreEntry = { hash: string; text: string | null };
 
+function normalizePaths(paths: string[]): string[] {
+  return [...new Set(paths)].sort((a, b) => a.localeCompare(b));
+}
+
 /**
  * Per-call scope. Caller acquires a scope before running a tool, snapshots
  * into it, then captures. Scopes are disjoint so two concurrent calls to the
@@ -94,13 +99,14 @@ export class EffectScope {
     }
   }
 
-  async capturePost(toolCallId: string, toolName: string, paths: string[]): Promise<EffectRecord> {
+  async capturePost(sessionId: string, toolCallId: string, toolName: string, paths: string[]): Promise<EffectRecord> {
+    const orderedPaths = normalizePaths(paths);
     const preHashes: Record<string, string> = {};
     const postHashes: Record<string, string> = {};
     const diffs: string[] = [];
     let binaryChanged = false;
 
-    for (const p of paths) {
+    for (const p of orderedPaths) {
       const preEntry = this.pre.get(p) ?? { hash: "absent", text: null };
       const postHash = (await hashFile(p)) ?? "absent";
       preHashes[p] = preEntry.hash;
@@ -119,14 +125,14 @@ export class EffectScope {
     return {
       schemaVersion: 1,
       toolCallId,
+      sessionId,
       toolName,
-      paths: [...paths].sort(),
+      paths: orderedPaths,
       preHashes,
       postHashes,
       unifiedDiff: diffs.join("\n"),
       binaryChanged,
-      rollbackConfidence: binaryChanged ? "best_effort" : "high",
-      at: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
     };
   }
 }
@@ -137,6 +143,64 @@ export class EffectScope {
  * now go through an internal scope keyed by toolCallId, so concurrent calls
  * to the same path are correctly isolated.
  */
+export async function appendEffectRecord(path: string, record: EffectRecord): Promise<void> {
+  const parsed = EffectRecordSchema.safeParse(record);
+  if (!parsed.success) {
+    throw new PiHarnessError("E_SCHEMA_PARSE", "effect record invalid", { issues: parsed.error.issues });
+  }
+
+  await mkdir(dirname(path), { recursive: true });
+  await appendFile(path, JSON.stringify(parsed.data) + "\n", "utf8");
+}
+
+export async function readEffectLog(path: string): Promise<EffectRecord[]> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    throw new PiHarnessError("E_SCHEMA_PARSE", "failed to read effect log", {
+      path,
+      cause: String(error),
+    });
+  }
+
+  const lines = raw.split("\n").filter(Boolean);
+  return lines.map((line, index) => {
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(line);
+    } catch (error) {
+      throw new PiHarnessError("E_SCHEMA_PARSE", "failed to parse effect log json", {
+        path,
+        line: index + 1,
+        cause: String(error),
+      });
+    }
+
+    try {
+      return parseOrThrow(EffectRecordSchema, parsedJson, `effect line ${index + 1}`);
+    } catch (error) {
+      throw new PiHarnessError("E_SCHEMA_PARSE", "effect log schema invalid", {
+        path,
+        line: index + 1,
+        cause: String(error),
+      });
+    }
+  });
+}
+
+export function renderWhatChanged(records: EffectRecord[]): string {
+  const out: string[] = [];
+  for (const rec of records) {
+    out.push(`# ${rec.toolName} (${rec.toolCallId})`);
+    for (const p of rec.paths) {
+      out.push(`  ${p}  ${rec.preHashes[p]?.slice(0, 14)} -> ${rec.postHashes[p]?.slice(0, 14)}`);
+    }
+    if (rec.unifiedDiff) out.push(rec.unifiedDiff);
+  }
+  return out.join("\n");
+}
+
 export class EffectRecorder {
   private scopes = new Map<string, EffectScope>();
 
@@ -146,12 +210,12 @@ export class EffectRecorder {
   async snapshotPre(paths: string[], toolCallId = "__default__"): Promise<void> {
     let s = this.scopes.get(toolCallId);
     if (!s) { s = new EffectScope(); this.scopes.set(toolCallId, s); }
-    await s.snapshotPre(paths);
+    await s.snapshotPre(normalizePaths(paths));
   }
 
-  async capturePost(toolCallId: string, toolName: string, paths: string[]): Promise<EffectRecord> {
+  async capturePost(sessionId: string, toolCallId: string, toolName: string, paths: string[]): Promise<EffectRecord> {
     const s = this.scopes.get(toolCallId) ?? this.scopes.get("__default__") ?? new EffectScope();
-    const rec = await s.capturePost(toolCallId, toolName, paths);
+    const rec = await s.capturePost(sessionId, toolCallId, toolName, paths);
     this.scopes.delete(toolCallId);
     return rec;
   }

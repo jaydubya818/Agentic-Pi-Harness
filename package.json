@@ -2,7 +2,7 @@
   "name": "agentic-pi-harness",
   "version": "0.3.0",
   "files": ["dist", "docs", "README.md", "LICENSE"],
-  "description": "Supervised agent runtime built on Pi — Claude Code grade loop control, policy enforcement, deterministic replay, effect capture, and isolated sub-agents.",
+  "description": "Tier A agent harness proof on Pi: canonical golden path, deterministic replay, effect capture, and crash-safe artifacts.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -20,6 +20,8 @@
     "verify": "tsx src/cli/verify.ts",
     "replay": "tsx src/cli/replay.ts",
     "what-changed": "tsx src/cli/what-changed.ts",
+    "golden:verify": "tsx src/cli/verify.ts ./goldens/canonical/tape.jsonl",
+    "golden:replay": "tsx src/cli/replay.ts ./goldens/canonical/tape.jsonl",
     "prepare": "husky || true"
   },
   "engines": {

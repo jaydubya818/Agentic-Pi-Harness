@@ -6,10 +6,16 @@ import { diffEffectLogs } from "../../src/replay/levelB.js";
 import { EffectRecord } from "../../src/schemas/index.js";
 
 const mk = (path: string, hash: string): EffectRecord => ({
-  schemaVersion: 1, toolCallId: "t", toolName: "write_file",
-  paths: [path], preHashes: { [path]: "sha256:0" }, postHashes: { [path]: hash },
-  unifiedDiff: "", binaryChanged: false, rollbackConfidence: "high",
-  at: "2026-04-08T00:00:00Z",
+  schemaVersion: 1,
+  toolCallId: "t",
+  sessionId: "s1",
+  toolName: "write_file",
+  paths: [path],
+  preHashes: { [path]: "sha256:0" },
+  postHashes: { [path]: hash },
+  unifiedDiff: "",
+  binaryChanged: false,
+  timestamp: "2026-04-08T00:00:00Z",
 });
 
 async function tmpLog(recs: EffectRecord[]): Promise<string> {

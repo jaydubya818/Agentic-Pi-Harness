@@ -1,16 +1,22 @@
 import { ModelClient } from "../adapter/pi-adapter.js";
-import { StreamEvent, EffectRecord, PolicyDecision, Checkpoint } from "../schemas/index.js";
+import { Checkpoint, EffectRecord, PolicyDecision, StreamEvent } from "../schemas/index.js";
 import { ReplayRecorder } from "../replay/recorder.js";
-import { EffectRecorder, EffectScope } from "../effect/recorder.js";
-import { placeholderApprove } from "../policy/decision.js";
-import { PolicyEngine } from "../policy/engine.js";
+import { appendEffectRecord, EffectRecorder } from "../effect/recorder.js";
+import { appendPolicyDecision, placeholderApprove } from "../policy/decision.js";
 import { wrapToolOutput } from "./promptAssembly.js";
 import { safeWriteJson } from "../session/provenance.js";
-import { Counters, CountersSink } from "../metrics/counter.js";
-import { CostTable, CostTracker, CostRecord } from "../metrics/cost.js";
-import { compact, CompactionRecord } from "../context/compaction.js";
-import { withRetry, defaultClassify } from "../retry/stateMachine.js";
-import { ConcurrencyClassifier, schedule, PendingCall } from "../tools/concurrency.js";
+
+export type LoopMode = "plan" | "assist" | "autonomous" | "worker" | "dry-run";
+
+export interface PolicyDecider {
+  decide(input: {
+    toolCallId: string;
+    toolName: string;
+    mode: LoopMode;
+    input: unknown;
+    policyDigest?: string;
+  }): PolicyDecision;
+}
 
 export interface LoopInputs {
   sessionId: string;
@@ -21,201 +27,190 @@ export interface LoopInputs {
   effectLogPath: string;
   policyLogPath: string;
   tools: Record<string, (input: any) => Promise<{ output: string; paths: string[] }>>;
-  policy?: PolicyEngine;
-  mode?: "plan" | "assist" | "autonomous" | "worker" | "dry-run";
-  concurrency?: ConcurrencyClassifier;
-  compactTargetBytes?: number;
-  retry?: { maxAttempts: number; baseDelayMs: number; maxDelayMs: number };
-  /**
-   * Optional JSONL trace sink. If set, every stream event is appended as a
-   * single JSON line with a wall-clock timestamp. Useful for debugging
-   * retries, compaction thresholds, and tool scheduling. Trace events are
-   * ADDITIONAL audit output; they do not replace the tape.
-   */
+  policy?: PolicyDecider;
+  policyDigest?: string;
+  mode?: LoopMode;
   tracePath?: string;
-  /**
-   * Optional pluggable counters sink. Defaults to in-memory `Counters`.
-   * Supply `FanOutCounters([new Counters(), await createOtelCounters()])`
-   * to mirror every increment into OpenTelemetry.
-   */
-  counters?: CountersSink;
-  /**
-   * Optional cost table for per-stream USD accounting. If set, a CostTracker
-   * is built and every text_delta + tool_result is observed. The final
-   * `LoopResult.cost` is the snapshot at loop exit.
-   */
-  costTable?: CostTable;
+  retry?: { maxAttempts: number; baseDelayMs: number; maxDelayMs: number };
+  concurrency?: unknown;
+  compactTargetBytes?: number;
+  counters?: unknown;
+  costTable?: unknown;
 }
 
 export interface LoopResult {
-  events: StreamEvent[];                  // faithful record of what was emitted to tape
-  compactedEvents: StreamEvent[];         // for feeding the next model turn (never written to tape)
+  events: StreamEvent[];
+  compactedEvents: StreamEvent[];
   effects: EffectRecord[];
   decisions: PolicyDecision[];
-  compactions: CompactionRecord[];
+  compactions: [];
   counters: Record<string, number>;
-  cost: CostRecord | null;
+  cost: null;
 }
 
-/**
- * Tier B loop. Design invariants:
- *   - Retry wraps a single `iter.next()` call. Events already appended to
- *     the tape are never re-appended on retry.
- *   - Concurrent tool calls get disjoint EffectScopes keyed by toolCallId,
- *     so two writes to the same path cannot clobber each other's pre-state.
- *   - `events` is the faithful tape record and is never mutated after a
- *     record lands. Compaction produces a separate `compactedEvents` view
- *     for the next model turn's prompt assembly.
- *   - Every scheduled closure has an unconditional catch so a thrown tool
- *     always produces a tool_result on the tape.
- */
+function createCounters() {
+  const counts = new Map<string, number>();
+  return {
+    inc(key: string, by = 1) {
+      counts.set(key, (counts.get(key) ?? 0) + by);
+    },
+    snapshot(): Record<string, number> {
+      return Object.fromEntries(counts);
+    },
+  };
+}
+
+function extractPaths(input: unknown): string[] {
+  if (input && typeof input === "object") {
+    const record = input as Record<string, unknown>;
+    if (typeof record.path === "string") return [record.path];
+    if (Array.isArray(record.paths)) return record.paths.filter((path): path is string => typeof path === "string");
+  }
+  return [];
+}
+
+function isMutatingTool(toolName: string): boolean {
+  return toolName === "write_file";
+}
+
+async function appendJsonl(path: string, value: unknown): Promise<void> {
+  const { appendFile, mkdir } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  await mkdir(dirname(path), { recursive: true });
+  await appendFile(path, JSON.stringify(value) + "\n", "utf8");
+}
+
+async function emitEvent(
+  tape: ReplayRecorder,
+  counters: ReturnType<typeof createCounters>,
+  events: StreamEvent[],
+  sessionId: string,
+  tracePath: string | undefined,
+  event: StreamEvent,
+): Promise<void> {
+  events.push(event);
+  await tape.writeEvent(event);
+  counters.inc(`events.${event.type}`);
+
+  if (tracePath) {
+    await appendJsonl(tracePath, {
+      at: new Date().toISOString(),
+      sessionId,
+      event,
+    });
+  }
+}
+
 export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
-  const counters: CountersSink = inp.counters ?? new Counters();
-  const costTracker: CostTracker | null = inp.costTable ? new CostTracker(inp.costTable) : null;
+  const mode = inp.mode ?? "assist";
+  const counters = createCounters();
   const events: StreamEvent[] = [];
   const effects: EffectRecord[] = [];
   const decisions: PolicyDecision[] = [];
-  const compactions: CompactionRecord[] = [];
-  const targetBytes = inp.compactTargetBytes ?? 64 * 1024;
   let messageCount = 0;
   let stopReason: string | null = null;
-  const cc = inp.concurrency;
-  const mode = inp.mode ?? "assist";
-  const retryCfg = inp.retry ?? { maxAttempts: 3, baseDelayMs: 10, maxDelayMs: 200 };
 
-  const emit = async (e: StreamEvent): Promise<void> => {
-    events.push(e);
-    await inp.tape.writeEvent(e);
-    counters.inc("events." + e.type);
-    if (costTracker) costTracker.observe(e);
-    if (inp.tracePath) {
-      await appendJsonl(inp.tracePath, {
-        at: new Date().toISOString(),
-        sessionId: inp.sessionId,
-        event: e,
-      });
-    }
-  };
+  for await (const event of inp.model.stream([])) {
+    await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, event);
 
-  const flushBatch = async (batch: Extract<StreamEvent, { type: "tool_use" }>[]) => {
-    if (batch.length === 0) return;
-    const calls: PendingCall[] = [];
-    const resultsById = new Map<string, StreamEvent>();
-
-    for (const tu of batch) {
-      const decision = inp.policy
-        ? inp.policy.decide({ toolCallId: tu.id, toolName: tu.name, mode, input: tu.input })
-        : placeholderApprove(tu.id);
-      decisions.push(decision);
-      await appendJsonl(inp.policyLogPath, decision);
-      counters.inc("policy." + decision.result);
-
-      if (decision.result === "deny") {
-        resultsById.set(tu.id, {
-          type: "tool_result", schemaVersion: 1, id: tu.id,
-          output: `denied by policy${decision.winningRuleId ? " (" + decision.winningRuleId + ")" : ""}`,
-          isError: true,
-        });
-        counters.inc("tool.denied");
-        continue;
-      }
-
-      const tool = inp.tools[tu.name];
-      if (!tool) {
-        resultsById.set(tu.id, {
-          type: "tool_result", schemaVersion: 1, id: tu.id,
-          output: `unknown tool: ${tu.name}`, isError: true,
-        });
-        counters.inc("tool.unknown");
-        continue;
-      }
-
-      // Per-call EffectScope — disjoint state, safe under concurrency.
-      const scope: EffectScope = inp.effects.scope();
-
-      calls.push({
-        id: tu.id, name: tu.name,
-        run: async () => {
-          let rawOut = "";
-          let isError = false;
-          try {
-            const paths = extractPaths(tu.input);
-            await scope.snapshotPre(paths);
-            const r = await tool(tu.input);
-            rawOut = r.output;
-            const rec = await scope.capturePost(tu.id, tu.name, r.paths);
-            effects.push(rec);
-            await appendJsonl(inp.effectLogPath, rec);
-          } catch (err) {
-            // Unconditional catch: a thrown tool always produces a result.
-            isError = true;
-            rawOut = `tool error: ${String((err as Error).message)}`;
-            counters.inc("tool.error");
-          }
-          const { wrapped } = wrapToolOutput(rawOut, {
-            toolName: tu.name, toolCallId: tu.id, maxBytes: 64 * 1024,
-          });
-          resultsById.set(tu.id, {
-            type: "tool_result", schemaVersion: 1, id: tu.id, output: wrapped, isError,
-          });
-        },
-      });
-    }
-
-    if (cc) await schedule(calls, cc);
-    else for (const c of calls) await c.run();
-
-    // Preserve original tool_use order.
-    for (const tu of batch) {
-      const res = resultsById.get(tu.id);
-      if (res) await emit(res);
-    }
-  };
-
-  // Manual stream iteration — retry is per-chunk, not per-stream.
-  const iter = inp.model.stream([])[Symbol.asyncIterator]();
-  let toolBatch: Extract<StreamEvent, { type: "tool_use" }>[] = [];
-
-  while (true) {
-    const step = await withRetry(
-      async () => iter.next(),
-      { ...retryCfg, classify: defaultClassify },
-    );
-    if (step.done) break;
-    const e = step.value;
-
-    if (e.type === "tool_use") {
-      toolBatch.push(e);
-      await emit(e);
+    if (event.type === "message_start") {
+      messageCount += 1;
       continue;
     }
 
-    // Any non-tool event flushes the batch first (preserves stream order).
-    if (toolBatch.length) {
-      const b = toolBatch;
-      toolBatch = [];
-      await flushBatch(b);
+    if (event.type === "message_stop") {
+      stopReason = event.stopReason;
+      continue;
     }
 
-    await emit(e);
+    if (event.type !== "tool_use") {
+      continue;
+    }
 
-    if (e.type === "message_start") messageCount++;
-    if (e.type === "message_stop") stopReason = e.stopReason;
-  }
-  if (toolBatch.length) {
-    const b = toolBatch;
-    toolBatch = [];
-    await flushBatch(b);
-  }
+    const decision = inp.policy
+      ? inp.policy.decide({
+          toolCallId: event.id,
+          toolName: event.name,
+          mode,
+          input: event.input,
+          policyDigest: inp.policyDigest,
+        })
+      : placeholderApprove({
+          toolCallId: event.id,
+          modeInfluence: mode,
+          policyDigest: inp.policyDigest ?? "sha256:policy-unknown",
+        });
 
-  // Compaction: produce a separate view for the next turn's prompt. Never
-  // mutates `events`, so the tape and in-memory record stay in sync.
-  let compactedEvents = events;
-  if (Buffer.byteLength(JSON.stringify(events), "utf8") > targetBytes) {
-    const { events: c, record } = compact(events, { targetBytes });
-    compactedEvents = c;
-    compactions.push(record);
-    counters.inc("compactions");
+    decisions.push(decision);
+    await appendPolicyDecision(inp.policyLogPath, decision);
+    counters.inc(`policy.${decision.result}`);
+
+    let toolResult: StreamEvent;
+
+    if (decision.result === "deny") {
+      counters.inc("tool.denied");
+      toolResult = {
+        type: "tool_result",
+        schemaVersion: 1,
+        id: event.id,
+        output: `denied by policy${decision.winningRuleId ? ` (${decision.winningRuleId})` : ""}`,
+        isError: true,
+      };
+      await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
+      continue;
+    }
+
+    const tool = inp.tools[event.name];
+    if (!tool) {
+      counters.inc("tool.unknown");
+      toolResult = {
+        type: "tool_result",
+        schemaVersion: 1,
+        id: event.id,
+        output: `unknown tool: ${event.name}`,
+        isError: true,
+      };
+      await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
+      continue;
+    }
+
+    let rawOutput = "";
+    let isError = false;
+
+    try {
+      const paths = extractPaths(event.input);
+      if (isMutatingTool(event.name)) {
+        await inp.effects.snapshotPre(paths, event.id);
+      }
+
+      const result = await tool(event.input);
+      rawOutput = result.output;
+
+      if (isMutatingTool(event.name)) {
+        const effect = await inp.effects.capturePost(inp.sessionId, event.id, event.name, result.paths);
+        effects.push(effect);
+        await appendEffectRecord(inp.effectLogPath, effect);
+      }
+    } catch (error) {
+      isError = true;
+      rawOutput = `tool error: ${String((error as Error).message)}`;
+      counters.inc("tool.error");
+    }
+
+    const { wrapped } = wrapToolOutput(rawOutput, {
+      toolName: event.name,
+      toolCallId: event.id,
+      maxBytes: 64 * 1024,
+    });
+
+    toolResult = {
+      type: "tool_result",
+      schemaVersion: 1,
+      id: event.id,
+      output: wrapped,
+      isError,
+    };
+    await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
   }
 
   const checkpoint: Checkpoint = {
@@ -228,27 +223,13 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
   };
   await safeWriteJson(inp.checkpointPath, checkpoint);
 
-  const cost = costTracker ? costTracker.snapshot() : null;
-  if (cost) {
-    counters.inc("cost.inputTokens", cost.inputTokens);
-    counters.inc("cost.outputTokens", cost.outputTokens);
-    counters.inc("cost.micros_usd", Math.round(cost.usd * 1e6));
-  }
-  return { events, compactedEvents, effects, decisions, compactions, counters: counters.snapshot(), cost };
-}
-
-function extractPaths(input: unknown): string[] {
-  if (input && typeof input === "object") {
-    const o = input as Record<string, unknown>;
-    if (typeof o.path === "string") return [o.path];
-    if (Array.isArray(o.paths)) return o.paths.filter((p): p is string => typeof p === "string");
-  }
-  return [];
-}
-
-async function appendJsonl(path: string, value: unknown): Promise<void> {
-  const { appendFile, mkdir } = await import("node:fs/promises");
-  const { dirname } = await import("node:path");
-  await mkdir(dirname(path), { recursive: true });
-  await appendFile(path, JSON.stringify(value) + "\n");
+  return {
+    events,
+    compactedEvents: events,
+    effects,
+    decisions,
+    compactions: [],
+    counters: counters.snapshot(),
+    cost: null,
+  };
 }

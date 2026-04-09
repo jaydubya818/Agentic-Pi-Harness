@@ -1,59 +1,117 @@
 # The Golden Path
 
-One canonical scenario drives Phase 1–2 implementation order. Every task is prioritized by whether it advances this path.
+One canonical scenario drives the Tier A implementation and proof.
 
-## The scenario
+## Scenario
 
-> A user has a failing test in a small TypeScript project. They launch `pi-harness run --mode assist "fix the failing test in tests/math.test.ts"`. The harness:
->
-> 1. Loads `PI.md` from the project, computes policy digest, writes the session **provenance manifest**.
-> 2. Starts the **query loop** and streams a mock model response that calls `read_file("tests/math.test.ts")`.
-> 3. The loop dispatches the read via the **streaming executor** (Tier B concurrency classes; in v0.1 Phase 1 all tools run serially).
-> 4. The `read_file` tool emits a **`ToolAuditRecord`**; output is wrapped in `<tool_output trusted="false" tool="read_file" id="...">` per the prompt-assembly rule.
-> 5. Mock model responds with a `write_file("tests/math.test.ts", <patched content>)` tool call.
-> 6. The loop writes a **placeholder `PolicyDecision`** (`provenanceMode: "placeholder"`, `result: "approve"`).
-> 7. The **effect recorder** snapshots the pre-hashes of `tests/math.test.ts`, then the tool runs, then the effect recorder captures post-hashes + unified diff → writes one `EffectRecord`.
-> 8. The mock model emits `message_stop` with `stopReason: "end_turn"`.
-> 9. The loop writes a **checkpoint** (crash-safe: write-rename + fsync) and closes the session.
-> 10. The **replay recorder** closes the tape with a header containing `loopGitSha`, `policyDigest`, `costTableVersion`, hash-chain digest.
-> 11. User runs `pi-harness verify <tape>` → green (schema + chain).
-> 12. User runs `pi-harness what-changed <sessionId>` → shows the unified diff of `tests/math.test.ts`.
-> 13. User runs `pi-harness inspect --policy <sessionId>` → shows one placeholder decision with `provenanceMode: "placeholder"`.
-> 14. CI replays the same tape against the loop → byte-equal event stream at Level A + matching effect log at Level B + matching decision stream at Level C.
+A user runs the harness against a tiny TypeScript workspace containing a failing test:
 
-## Why this scenario
+```bash
+pi-harness run ./.pi-work ./.pi-out
+```
 
-It exercises every Tier A-runtime component end-to-end:
-- Session start + provenance manifest
-- Zod schema validation
-- Loop 5-phase execution
-- Mock `ModelClient` adapter
-- Tool dispatch + audit records
-- Prompt-injection containment wrapping
-- Placeholder policy decisions
-- Effect recorder (minimum spec)
-- Crash-safe checkpoint writes
-- Replay tape with hash chain + header
-- `verify`, `what-changed`, `inspect` CLIs
-- Replay-drift CI at all three determinism levels
+The Tier A loop then performs exactly this sequence:
 
-It **does not** exercise (intentionally deferred):
-- Multiple providers
-- Real retries (mock doesn't fail)
-- Compaction
-- Permissions engine (placeholder only)
-- Sub-agents / worktrees
-- Hooks
-- Worker mode
-- Signed policy
+1. Creates a session id.
+2. Writes the session provenance manifest.
+3. Seeds `./.pi-work/tests/math.test.ts` with the failing assertion `expect(1 + 1).toBe(3)`.
+4. Starts the deterministic mock-model stream.
+5. Emits `message_start`.
+6. Emits a `text_delta` announcing that it is reading the failing test.
+7. Calls `read_file` on `tests/math.test.ts`.
+8. Wraps the read result as untrusted tool output.
+9. Emits another `text_delta` announcing the patch step.
+10. Calls `write_file` with the corrected assertion `expect(1 + 1).toBe(2)`.
+11. Records one placeholder `PolicyDecision` for `read_file` and one for `write_file`.
+12. Records one `EffectRecord` for the write.
+13. Emits `message_stop` with `stopReason: "end_turn"`.
+14. Writes the crash-safe checkpoint.
+15. Leaves replayable artifacts on disk.
 
-## Gate
+## Expected artifacts
 
-By **end of Week 2**, running the golden path must produce:
-1. A session directory under `~/.pi/sessions/<id>/` with `provenance.json`, `checkpoint.json`, `metrics.json`.
-2. A tape at `~/.pi/tapes/<id>.jsonl` that passes `pi-harness verify`.
-3. An effect log at `~/.pi/effects/<id>.jsonl` with one record.
-4. `pi-harness what-changed <id>` output matching the expected diff.
-5. `pi-harness replay <tape>` producing byte-equal events at Level A.
+For a session id `<sessionId>`, the run produces:
 
-If this does not work by Friday of Week 2, feature work halts until it does.
+```text
+.pi-out/
+  tapes/<sessionId>.jsonl
+  effects/<sessionId>.jsonl
+  sessions/<sessionId>/
+    checkpoint.json
+    metrics.json
+    policy.jsonl
+    provenance.json
+```
+
+The repo also ships one committed canonical artifact set:
+
+```text
+goldens/canonical/
+  tape.jsonl
+  effects.jsonl
+  policy.jsonl
+```
+
+## Expected tape shape
+
+The canonical tape contains:
+
+1. one header record
+2. `message_start`
+3. `text_delta`
+4. `tool_use` for `read_file`
+5. `tool_result` for `read_file`
+6. `text_delta`
+7. `tool_use` for `write_file`
+8. `tool_result` for `write_file`
+9. `message_stop`
+
+## User verification flow
+
+After a run, a user should be able to do all of the following:
+
+```bash
+pi-harness verify ./.pi-out/tapes/<sessionId>.jsonl
+pi-harness what-changed ./.pi-out/effects/<sessionId>.jsonl
+pi-harness inspect ./.pi-out/sessions/<sessionId>/policy.jsonl
+pi-harness replay ./.pi-out/tapes/<sessionId>.jsonl
+```
+
+## Trace option
+
+For lightweight loop debugging, the same run can emit a JSONL trace:
+
+```bash
+pi-harness run ./.pi-work ./.pi-out --trace
+```
+
+or
+
+```bash
+pi-harness run ./.pi-work ./.pi-out --trace=./trace.jsonl
+```
+
+This trace is supplemental only. The tape remains the authoritative replay artifact.
+
+## CI proof
+
+CI proves the canonical path by:
+
+1. verifying the committed golden tape
+2. replaying the committed golden tape
+3. running the canonical golden path once
+4. comparing the produced tape against the committed golden tape at **Level A**
+5. comparing the produced effect log against the committed golden effect log at **Level B**
+6. comparing the produced policy log against the committed golden policy log at **Level C**
+
+## Out of scope
+
+This golden path intentionally excludes:
+- real provider integration
+- hooks
+- compaction
+- concurrency
+- worktrees / subagents
+- rollback
+- policy engine expansion beyond placeholder approvals
+- multiple scenarios

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { verifyTape } from "../replay/recorder.js";
 
 interface Check { name: string; ok: boolean; detail?: string; }
 
@@ -11,12 +12,23 @@ export async function doctor(): Promise<Check[]> {
   try {
     const tv = await readFile(".tool-versions", "utf8");
     checks.push({ name: ".tool-versions present", ok: /nodejs/.test(tv) });
-  } catch { checks.push({ name: ".tool-versions present", ok: false }); }
+  } catch {
+    checks.push({ name: ".tool-versions present", ok: false });
+  }
 
   try {
     const pkg = JSON.parse(await readFile("package.json", "utf8"));
     checks.push({ name: "zod installed", ok: !!pkg.dependencies?.zod });
-  } catch { checks.push({ name: "package.json", ok: false }); }
+  } catch {
+    checks.push({ name: "package.json", ok: false });
+  }
+
+  const goldenTape = await verifyTape("goldens/canonical/tape.jsonl");
+  checks.push({
+    name: "canonical golden tape verifies",
+    ok: goldenTape.ok,
+    detail: goldenTape.ok ? goldenTape.digest : goldenTape.error,
+  });
 
   return checks;
 }

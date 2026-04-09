@@ -47,8 +47,9 @@ export interface DecisionInput {
   toolName: string;
   mode: "plan" | "assist" | "autonomous" | "worker" | "dry-run";
   input: unknown;
-  manifestInfluence?: string | null;
-  hookInfluence?: string | null;
+  manifestInfluence?: { field: string; value: string } | null;
+  hookInfluence?: { hookId: string; decision: string; reason?: string } | null;
+  policyDigest?: string;
 }
 
 function globMatch(pattern: string, value: string): boolean {
@@ -129,14 +130,20 @@ export class PolicyEngine {
     this.resolved = resolveRules(doc.rules);
   }
   decide(inp: DecisionInput): PolicyDecision {
-    const matched: string[] = [];
+    const ruleEvaluation: PolicyDecision["ruleEvaluation"] = [];
     const order: string[] = [];
     let winning: ResolvedRule | null = null;
     for (const r of this.resolved) {
       order.push(r.id);
-      if (ruleMatches(r, inp)) {
-        matched.push(r.id);
-        if (!winning) winning = r;
+      const matched = ruleMatches(r, inp);
+      ruleEvaluation.push({
+        scope: "project",
+        ruleId: r.id,
+        matched,
+        effect: r.action === "approve" ? "allow" : "deny",
+      });
+      if (matched && !winning) {
+        winning = r;
       }
     }
     const result = winning ? winning.action : this.doc.default;
@@ -145,12 +152,15 @@ export class PolicyEngine {
       toolCallId: inp.toolCallId,
       result,
       provenanceMode: "full",
-      matchedRuleIds: matched,
-      winningRuleId: winning?.id ?? null,
-      evaluationOrder: order,
       modeInfluence: inp.mode,
       manifestInfluence: inp.manifestInfluence ?? null,
-      hookInfluence: inp.hookInfluence ?? null,
+      ruleEvaluation,
+      evaluationOrder: order,
+      winningRuleId: winning?.id ?? null,
+      hookDecision: inp.hookInfluence ?? null,
+      mutatedByHook: false,
+      approvalRequiredBy: result === "ask" ? "rule" : null,
+      policyDigest: inp.policyDigest ?? "sha256:policy-unknown",
       at: new Date().toISOString(),
     };
   }

@@ -1,19 +1,15 @@
-import { readFile } from "node:fs/promises";
-import { EffectRecordSchema } from "../schemas/index.js";
+import { readEffectLog, renderWhatChanged } from "../effect/recorder.js";
 
 export async function whatChanged(effectLog: string): Promise<string> {
-  const raw = await readFile(effectLog, "utf8");
-  const lines = raw.split("\n").filter(Boolean);
-  const out: string[] = [];
-  for (const l of lines) {
-    const rec = EffectRecordSchema.parse(JSON.parse(l));
-    out.push(`# ${rec.toolName} (${rec.toolCallId}) rollback=${rec.rollbackConfidence}`);
-    for (const p of rec.paths) out.push(`  ${p}  ${rec.preHashes[p]?.slice(0, 14)} -> ${rec.postHashes[p]?.slice(0, 14)}`);
-    if (rec.unifiedDiff) out.push(rec.unifiedDiff);
-  }
-  return out.join("\n");
+  const records = await readEffectLog(effectLog);
+  return renderWhatChanged(records);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  whatChanged(process.argv[2]).then((s) => console.log(s));
+  const effectLogPath = process.argv[2];
+  if (!effectLogPath) {
+    console.error("usage: what-changed <effects.jsonl>");
+    process.exit(2);
+  }
+  whatChanged(effectLogPath).then((s) => console.log(s));
 }

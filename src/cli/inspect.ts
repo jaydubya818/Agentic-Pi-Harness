@@ -1,17 +1,15 @@
-import { readFile } from "node:fs/promises";
-import { PolicyDecisionSchema } from "../schemas/index.js";
+import { readPolicyLog, renderPolicyInspection } from "../policy/decision.js";
 
 export async function inspectPolicy(policyLog: string): Promise<string> {
-  const raw = await readFile(policyLog, "utf8");
-  const lines = raw.split("\n").filter(Boolean);
-  const out: string[] = [];
-  for (const l of lines) {
-    const d = PolicyDecisionSchema.parse(JSON.parse(l));
-    out.push(`${d.at} ${d.toolCallId} ${d.result} provenance=${d.provenanceMode}`);
-  }
-  return out.join("\n");
+  const decisions = await readPolicyLog(policyLog);
+  return renderPolicyInspection(decisions);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  inspectPolicy(process.argv[2]).then((s) => console.log(s));
+  const policyLogPath = process.argv[2];
+  if (!policyLogPath) {
+    console.error("usage: inspect <policy.jsonl>");
+    process.exit(2);
+  }
+  inspectPolicy(policyLogPath).then((s) => console.log(s));
 }
