@@ -23,7 +23,9 @@ The effect log matches:
 Explicitly excluded: file `mtime`, `atime`, `ctime`; `rollbackRef` paths; any wall-clock in the record.
 
 ### Level C — Decision determinism
-The stream of `PolicyDecision`, `CompactionRecord`, retry events, approval outcomes, and tool-routing choices matches.
+The stream of `PolicyDecision`, hook-mediated deny outcomes, and tool-routing choices matches.
+
+Milestone 3 retry semantics do **not** introduce a new persisted retry artifact or replay tape event type. Successful retries before the first persisted event of a model invocation are intentionally invisible in tape shape; failed retries leave the tape valid up to the last durable record.
 
 Placeholder decisions (`provenanceMode: "placeholder"`) are tolerated against full decisions during Phase 1–2; after Phase 3 this becomes a hard diff.
 
@@ -48,6 +50,21 @@ Every tape begins with:
   "recordHash": "sha256:..."
 }
 ```
+
+## Retry compatibility
+
+Milestone 3 keeps retry state runtime-only:
+- no new artifact family
+- no new tape event type
+- no retry metadata persisted into `PolicyDecision`, `EffectRecord`, checkpoint, or provenance
+
+Retryable scope in this release line is intentionally narrow:
+- only transient model-open failures before the first event of the current invocation is durably written
+- deterministic capped backoff only
+- no tool retries
+- no mid-stream resumption after persisted output
+
+That means replay stays compatible with the existing tape/effect/policy contracts: a successful retried invocation produces the same persisted sequence as a first-try success.
 
 ## Hash chain
 

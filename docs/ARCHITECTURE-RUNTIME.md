@@ -39,15 +39,23 @@ Given a tool_use event, `PolicyEngine.decide()` produces a `PolicyDecision` with
 
 ## Layer 4 — Loop (`src/loop/`)
 
-`runQueryLoop` orchestrates the pipeline. It:
+`runQueryLoop` orchestrates the Tier A + early Tier B pipeline. It:
 
-1. Opens the model stream inside `withRetry` so transient failures back off automatically and context overflow bubbles as `E_BUDGET_EXCEEDED`.
-2. Consumes `StreamEvent`s. `tool_use` events are buffered into the current batch; any non-tool event flushes the batch first.
-3. Routes each flushed batch through Layer 2 → Layer 3.
-4. Pre-snapshots paths, runs the tool, captures an `EffectRecord`, wraps output via `wrapToolOutput` (Layer +, see sanitization), and emits a `tool_result` event.
-5. At end-of-turn, checks the event buffer against `compactTargetBytes` and runs `compact()` if necessary, recording a `CompactionRecord`.
+1. Opens the model stream and consumes `StreamEvent`s sequentially.
+2. Optionally applies a bounded deterministic retry wrapper only around model invocation / first-pull failures before any event from that invocation has been durably written to tape.
+3. Records each event to the replay tape before any downstream handling.
+4. For `tool_use`, computes the base policy decision first, then applies Milestone 2 pre-hook mediation if hooks are configured.
+5. If approved, pre-snapshots paths, runs the tool once, captures an `EffectRecord` for mutating tools, runs observe-only post-hooks, wraps output via `wrapToolOutput`, and emits a `tool_result` event.
+6. Writes the loop-end checkpoint via `safeWriteJson`.
 
-**Invariant.** The loop never writes to the filesystem except via Layer + recorders and `safeWriteJson`. Stream order in the tape matches stream order from the model, with `tool_result` events appearing after their batch completes.
+Retry rules in the current release line:
+- disabled unless explicit `retry` config is supplied
+- retryable only for transient model-open failures classified from normalized `code` / `name` / `status`
+- no jitter; capped deterministic backoff only
+- once one event from the current model invocation is durably written, retry is no longer allowed for that invocation
+- tool execution, policy decisions, hook decisions, schema/parse failures, and persistence failures remain fail-closed / non-retryable in this milestone
+
+**Invariant.** The loop never writes to the filesystem except via Layer + recorders and `safeWriteJson`. Successful retries before the first persisted event are invisible in tape shape; once an event is written, the invocation is committed and will not be retried.
 
 ## Layer 5 — Session & Provenance (`src/session/`)
 
@@ -67,26 +75,27 @@ These are called by Layer 4 but written to by no other layer. They are the only 
 ## Data flow (one turn)
 
 ```
-model.stream() ──► StreamEvent ──► [buffer if tool_use, else flush]
-                                         │
-                               ┌─────────┴─────────┐
-                               ▼                   ▼
-                       PolicyEngine.decide   HookDispatcher(PreToolUse)
+model.stream() ──► [optional retry only before first persisted event]
+        │
+        ▼
+   StreamEvent ──► tape
+        │
+        ├── non-tool event ──► continue
+        │
+        └── tool_use ──► PolicyEngine.decide ──► Hook mediation (PreToolUse)
                                │
                        deny? ──► tool-error event ──► tape
                                │
                                ▼
-                       schedule(batch, cc)
+                        EffectRecorder.pre ──► tool(input)
+                               │                    │
+                               │                    ▼
+                               │            Hook mediation (PostToolUse, observe-only)
+                               ▼
+                        EffectRecorder.post ──► EffectRecord
                                │
-                        ┌──────┴──────┐
-                        ▼             ▼
-                EffectRecorder.pre   tool(input)
-                                     │
-                                     ▼
-                            EffectRecorder.post ──► EffectRecord
-                                     │
-                                     ▼
-                            wrapToolOutput ──► tool_result ──► tape
+                               ▼
+                      wrapToolOutput ──► tool_result ──► tape
 ```
 
 ## What's not in the runtime (by design)

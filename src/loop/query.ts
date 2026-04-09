@@ -4,8 +4,16 @@ import { ReplayRecorder } from "../replay/recorder.js";
 import { appendEffectRecord, EffectRecorder } from "../effect/recorder.js";
 import { dispatchPostToolHooks, dispatchPreToolHooks, mergeHookDeniedDecision, RegisteredToolHook } from "../hooks/mediation.js";
 import { appendPolicyDecision, decidePolicy, PolicyDecider, PolicyMode } from "../policy/decision.js";
+import {
+  classifyRetryableModelError,
+  computeRetryDelayMs,
+  normalizeRetryError,
+  shouldRetryModelInvocation,
+  sleep,
+} from "../retry/stateMachine.js";
 import { wrapToolOutput } from "./promptAssembly.js";
 import { safeWriteJson } from "../session/provenance.js";
+import { PiHarnessError } from "../errors.js";
 
 export type LoopMode = "plan" | "assist" | "autonomous" | "worker" | "dry-run";
 
@@ -94,6 +102,220 @@ async function emitEvent(
   }
 }
 
+function modelIterator(model: ModelClient): AsyncIterator<StreamEvent> {
+  const stream = model.stream([]);
+  const factory = stream[Symbol.asyncIterator];
+  if (typeof factory !== "function") {
+    throw new PiHarnessError("E_MODEL_ADAPTER", "model.stream() did not return an async iterable", {}, { retryable: false });
+  }
+  return factory.call(stream);
+}
+
+function wrapModelInvocationFailure(error: unknown, input: {
+  classification: string;
+  attempt: number;
+  maxAttempts: number;
+  boundaryReason: "before_first_persisted_event" | "after_persisted_event";
+}) {
+  if (error instanceof PiHarnessError) {
+    error.retryable = false;
+    error.context = {
+      ...error.context,
+      retryClassification: input.classification,
+      attempt: input.attempt,
+      maxAttempts: input.maxAttempts,
+      boundaryReason: input.boundaryReason,
+      normalizedError: normalizeRetryError(error),
+    };
+    return error;
+  }
+
+  return new PiHarnessError(
+    "E_MODEL_ADAPTER",
+    `model invocation failed: ${error instanceof Error ? error.message : String(error)}`,
+    {
+      retryClassification: input.classification,
+      attempt: input.attempt,
+      maxAttempts: input.maxAttempts,
+      boundaryReason: input.boundaryReason,
+      normalizedError: normalizeRetryError(error),
+    },
+    { retryable: false },
+  );
+}
+
+function retryFailureCounterKey(input: {
+  retry?: { maxAttempts: number; baseDelayMs: number; maxDelayMs: number };
+  attempt: number;
+  classification: string;
+}): "retry.exhausted" | "retry.fail_closed" {
+  return input.classification === "model_open_transient" && !!input.retry && input.attempt >= input.retry.maxAttempts
+    ? "retry.exhausted"
+    : "retry.fail_closed";
+}
+
+async function processEvent(
+  inp: LoopInputs,
+  mode: LoopMode,
+  counters: ReturnType<typeof createCounters>,
+  events: StreamEvent[],
+  effects: EffectRecord[],
+  decisions: PolicyDecision[],
+  event: StreamEvent,
+): Promise<{ messageStarted: boolean; stopReason: string | null }> {
+  await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, event);
+
+  if (event.type === "message_start") {
+    return { messageStarted: true, stopReason: null };
+  }
+
+  if (event.type === "message_stop") {
+    return { messageStarted: false, stopReason: event.stopReason };
+  }
+
+  if (event.type !== "tool_use") {
+    return { messageStarted: false, stopReason: null };
+  }
+
+  const baseDecision = decidePolicy({
+    policyMode: inp.policyMode,
+    policy: inp.policy,
+    toolCallId: event.id,
+    toolName: event.name,
+    mode,
+    input: event.input,
+    policyDigest: inp.policyDigest,
+  });
+
+  let decision = baseDecision;
+  if (decision.result !== "deny" && inp.hooks?.length) {
+    const preHook = await dispatchPreToolHooks(inp.hooks, {
+      event: "PreToolUse",
+      sessionId: inp.sessionId,
+      turnIndex: 0,
+      payload: {
+        toolCallId: event.id,
+        toolName: event.name,
+        mode,
+        input: event.input,
+        baseDecision: {
+          result: baseDecision.result,
+          provenanceMode: baseDecision.provenanceMode,
+          winningRuleId: baseDecision.winningRuleId,
+        },
+      },
+    });
+    if (preHook.deniedBy) {
+      decision = mergeHookDeniedDecision(baseDecision, preHook.deniedBy);
+    }
+  }
+
+  decisions.push(decision);
+  await appendPolicyDecision(inp.policyLogPath, decision);
+  counters.inc(`policy.${decision.result}`);
+
+  let toolResult: StreamEvent;
+
+  if (decision.result === "deny") {
+    counters.inc("tool.denied");
+    const deniedByHook = decision.hookDecision ? ` (hook ${decision.hookDecision.hookId})` : "";
+    toolResult = {
+      type: "tool_result",
+      schemaVersion: 1,
+      id: event.id,
+      output: `denied by policy${decision.winningRuleId ? ` (${decision.winningRuleId})` : ""}${deniedByHook}`,
+      isError: true,
+    };
+    await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
+    return { messageStarted: false, stopReason: null };
+  }
+
+  const tool = inp.tools[event.name];
+  if (!tool) {
+    counters.inc("tool.unknown");
+    toolResult = {
+      type: "tool_result",
+      schemaVersion: 1,
+      id: event.id,
+      output: `unknown tool: ${event.name}`,
+      isError: true,
+    };
+    await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
+    return { messageStarted: false, stopReason: null };
+  }
+
+  let rawOutput = "";
+  let isError = false;
+
+  try {
+    const paths = extractPaths(event.input);
+    if (isMutatingTool(event.name)) {
+      await inp.effects.snapshotPre(paths, event.id);
+    }
+
+    const result = await tool(event.input);
+    rawOutput = result.output;
+
+    if (isMutatingTool(event.name)) {
+      const effect = await inp.effects.capturePost(inp.sessionId, event.id, event.name, result.paths);
+      effects.push(effect);
+      await appendEffectRecord(inp.effectLogPath, effect);
+    }
+
+    if (inp.hooks?.length) {
+      await dispatchPostToolHooks(inp.hooks, {
+        event: "PostToolUse",
+        sessionId: inp.sessionId,
+        turnIndex: 0,
+        payload: {
+          toolCallId: event.id,
+          toolName: event.name,
+          mode,
+          input: event.input,
+          isError: false,
+          paths: result.paths,
+        },
+      });
+    }
+  } catch (error) {
+    isError = true;
+    rawOutput = `tool error: ${String((error as Error).message)}`;
+    counters.inc("tool.error");
+    if (inp.hooks?.length) {
+      await dispatchPostToolHooks(inp.hooks, {
+        event: "PostToolUse",
+        sessionId: inp.sessionId,
+        turnIndex: 0,
+        payload: {
+          toolCallId: event.id,
+          toolName: event.name,
+          mode,
+          input: event.input,
+          isError: true,
+          paths: [],
+        },
+      });
+    }
+  }
+
+  const { wrapped } = wrapToolOutput(rawOutput, {
+    toolName: event.name,
+    toolCallId: event.id,
+    maxBytes: 64 * 1024,
+  });
+
+  toolResult = {
+    type: "tool_result",
+    schemaVersion: 1,
+    id: event.id,
+    output: wrapped,
+    isError,
+  };
+  await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
+
+  return { messageStarted: false, stopReason: null };
+}
+
 export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
   const mode = inp.mode ?? "assist";
   const counters = createCounters();
@@ -103,158 +325,79 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
   let messageCount = 0;
   let stopReason: string | null = null;
 
-  for await (const event of inp.model.stream([])) {
-    await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, event);
+  let attempt = 1;
+  let completed = false;
+  let retried = false;
 
-    if (event.type === "message_start") {
-      messageCount += 1;
-      continue;
-    }
-
-    if (event.type === "message_stop") {
-      stopReason = event.stopReason;
-      continue;
-    }
-
-    if (event.type !== "tool_use") {
-      continue;
-    }
-
-    const baseDecision = decidePolicy({
-      policyMode: inp.policyMode,
-      policy: inp.policy,
-      toolCallId: event.id,
-      toolName: event.name,
-      mode,
-      input: event.input,
-      policyDigest: inp.policyDigest,
-    });
-
-    let decision = baseDecision;
-    if (decision.result !== "deny" && inp.hooks?.length) {
-      const preHook = await dispatchPreToolHooks(inp.hooks, {
-        event: "PreToolUse",
-        sessionId: inp.sessionId,
-        turnIndex: 0,
-        payload: {
-          toolCallId: event.id,
-          toolName: event.name,
-          mode,
-          input: event.input,
-          baseDecision: {
-            result: baseDecision.result,
-            provenanceMode: baseDecision.provenanceMode,
-            winningRuleId: baseDecision.winningRuleId,
-          },
-        },
-      });
-      if (preHook.deniedBy) {
-        decision = mergeHookDeniedDecision(baseDecision, preHook.deniedBy);
-      }
-    }
-
-    decisions.push(decision);
-    await appendPolicyDecision(inp.policyLogPath, decision);
-    counters.inc(`policy.${decision.result}`);
-
-    let toolResult: StreamEvent;
-
-    if (decision.result === "deny") {
-      counters.inc("tool.denied");
-      const deniedByHook = decision.hookDecision ? ` (hook ${decision.hookDecision.hookId})` : "";
-      toolResult = {
-        type: "tool_result",
-        schemaVersion: 1,
-        id: event.id,
-        output: `denied by policy${decision.winningRuleId ? ` (${decision.winningRuleId})` : ""}${deniedByHook}`,
-        isError: true,
-      };
-      await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
-      continue;
-    }
-
-    const tool = inp.tools[event.name];
-    if (!tool) {
-      counters.inc("tool.unknown");
-      toolResult = {
-        type: "tool_result",
-        schemaVersion: 1,
-        id: event.id,
-        output: `unknown tool: ${event.name}`,
-        isError: true,
-      };
-      await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
-      continue;
-    }
-
-    let rawOutput = "";
-    let isError = false;
+  while (!completed) {
+    let currentInvocationPersistedEvent = false;
+    let iterator: AsyncIterator<StreamEvent>;
 
     try {
-      const paths = extractPaths(event.input);
-      if (isMutatingTool(event.name)) {
-        await inp.effects.snapshotPre(paths, event.id);
-      }
-
-      const result = await tool(event.input);
-      rawOutput = result.output;
-
-      if (isMutatingTool(event.name)) {
-        const effect = await inp.effects.capturePost(inp.sessionId, event.id, event.name, result.paths);
-        effects.push(effect);
-        await appendEffectRecord(inp.effectLogPath, effect);
-      }
-
-      if (inp.hooks?.length) {
-        await dispatchPostToolHooks(inp.hooks, {
-          event: "PostToolUse",
-          sessionId: inp.sessionId,
-          turnIndex: 0,
-          payload: {
-            toolCallId: event.id,
-            toolName: event.name,
-            mode,
-            input: event.input,
-            isError: false,
-            paths: result.paths,
-          },
-        });
-      }
+      iterator = modelIterator(inp.model);
     } catch (error) {
-      isError = true;
-      rawOutput = `tool error: ${String((error as Error).message)}`;
-      counters.inc("tool.error");
-      if (inp.hooks?.length) {
-        await dispatchPostToolHooks(inp.hooks, {
-          event: "PostToolUse",
-          sessionId: inp.sessionId,
-          turnIndex: 0,
-          payload: {
-            toolCallId: event.id,
-            toolName: event.name,
-            mode,
-            input: event.input,
-            isError: true,
-            paths: [],
-          },
-        });
+      const classification = classifyRetryableModelError(error, { hasPersistedEvent: false });
+      counters.inc(`retry.class.${classification}`);
+      if (shouldRetryModelInvocation({ retry: inp.retry, attempt, classification })) {
+        counters.inc("retry.attempted");
+        retried = true;
+        await sleep(computeRetryDelayMs(attempt, inp.retry!.baseDelayMs, inp.retry!.maxDelayMs));
+        attempt += 1;
+        continue;
       }
+      counters.inc(retryFailureCounterKey({ retry: inp.retry, attempt, classification }));
+      throw wrapModelInvocationFailure(error, {
+        classification,
+        attempt,
+        maxAttempts: inp.retry?.maxAttempts ?? 1,
+        boundaryReason: "before_first_persisted_event",
+      });
     }
 
-    const { wrapped } = wrapToolOutput(rawOutput, {
-      toolName: event.name,
-      toolCallId: event.id,
-      maxBytes: 64 * 1024,
-    });
+    while (true) {
+      let next: IteratorResult<StreamEvent>;
+      try {
+        next = await iterator.next();
+      } catch (error) {
+        const classification = classifyRetryableModelError(error, { hasPersistedEvent: currentInvocationPersistedEvent });
+        const boundaryReason = currentInvocationPersistedEvent
+          ? "after_persisted_event"
+          : "before_first_persisted_event";
+        counters.inc(`retry.class.${classification}`);
 
-    toolResult = {
-      type: "tool_result",
-      schemaVersion: 1,
-      id: event.id,
-      output: wrapped,
-      isError,
-    };
-    await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
+        if (shouldRetryModelInvocation({ retry: inp.retry, attempt, classification })) {
+          counters.inc("retry.attempted");
+          retried = true;
+          await sleep(computeRetryDelayMs(attempt, inp.retry!.baseDelayMs, inp.retry!.maxDelayMs));
+          attempt += 1;
+          break;
+        }
+
+        counters.inc(retryFailureCounterKey({ retry: inp.retry, attempt, classification }));
+        throw wrapModelInvocationFailure(error, {
+          classification,
+          attempt,
+          maxAttempts: inp.retry?.maxAttempts ?? 1,
+          boundaryReason,
+        });
+      }
+
+      if (next.done) {
+        completed = true;
+        if (retried) counters.inc("retry.succeeded");
+        break;
+      }
+
+      const event = next.value;
+      const result = await processEvent(inp, mode, counters, events, effects, decisions, event);
+      currentInvocationPersistedEvent = true;
+      if (result.messageStarted) {
+        messageCount += 1;
+      }
+      if (result.stopReason) {
+        stopReason = result.stopReason;
+      }
+    }
   }
 
   const checkpoint: Checkpoint = {
