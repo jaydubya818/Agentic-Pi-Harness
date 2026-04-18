@@ -4,7 +4,7 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 
 ## [0.4.0] — 2026-04-18
 
-Maintenance + perf release. Toolchain aligned with `@mariozechner/pi-coding-agent` v0.67.68. 53 test files, 159 tests, tsc clean, zero audit findings.
+Maintenance + perf release. Toolchain aligned with `@mariozechner/pi-coding-agent` v0.67.68. 55 test files, 166 tests, tsc clean, zero audit findings.
 
 ### Changed
 - **Toolchain bump to match latest Pi stack** — TypeScript `5.4` → `5.7.3`, Vitest `1.4` → `3.2.4`, `@types/node` → `^20.17`, `tsx` → `^4.19`. Removed 4 moderate-severity vulnerabilities reported by `npm audit`.
@@ -18,10 +18,13 @@ Maintenance + perf release. Toolchain aligned with `@mariozechner/pi-coding-agen
 
 ### Added
 - **End-to-end integration tests** — `tests/unit/runVerifyReplay.e2e.test.ts` drives `runGoldenPath` → `verifyTape` → `readTape` and checks tape/effect/policy/checkpoint outputs from scratch. Fills the run→verify→replay gap previously only covered at the unit level.
+- **`doctor` CLI coverage** — `tests/unit/doctor.test.ts` (2 tests) asserts every check returns a `{ name, ok, detail? }` shape and that a healthy repo reports all-green.
+- **Append-mode invariant tests** — `tests/unit/replayRecorderAppendMode.test.ts` (5 tests) prevent any regression back to the old O(N²) rewrite writer: file size must grow monotonically across `writeEvent`s, each append stays verifiable as the chain extends, `writeEvent` after `close` throws, `close` is idempotent, and a second `writeHeader` cleanly replaces the tape.
 - `ReplayRecorder#close()` — explicit close for the append file handle. Called by the CLI in a `finally` block so crashes during a run don't leak the handle.
 
 ### Fixed
 - Eliminated a file-handle leak path: writers that re-used a `ReplayRecorder` across headers now close the prior handle before opening the new one.
+- **Latent bug in `writeHeader` re-init:** calling `writeHeader` a second time on the same recorder used to chain off the prior session's final `recordHash` even though the on-disk file was rewritten from scratch. `prevHash` is now reset to the all-zero root on every `writeHeader`, so a re-initialized tape always roots correctly. Surfaced by the new append-mode invariant tests.
 
 ## [0.3.0] — 2026-04-08
 

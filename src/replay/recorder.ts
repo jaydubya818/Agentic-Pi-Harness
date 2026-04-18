@@ -166,6 +166,11 @@ export class ReplayRecorder {
       await this.handle.close();
       this.handle = null;
     }
+    // Reset chain state so a re-initialized session always roots the new
+    // tape at the all-zero prevHash. Without this, a second writeHeader
+    // call would chain off the prior session's final recordHash even
+    // though the on-disk file is now a fresh tape.
+    this.prevHash = ZERO;
     const base = {
       type: "header" as const,
       schemaVersion: 1 as const,
