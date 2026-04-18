@@ -2,15 +2,19 @@ import { PiProviderLike, PiStreamChunk } from "./pi-client.js";
 import { PiHarnessError } from "../errors.js";
 
 /**
- * Real pi.dev provider. Lazily imports the `pi` package so the harness can
- * build and test without pulling the dependency. To activate:
+ * Real Pi provider. Lazily imports `@mariozechner/pi-ai` (v0.67.x) so the
+ * harness can build and test without pulling the dependency. To activate:
  *
- *   npm install pi
+ *   npm install @mariozechner/pi-ai
  *   new PiDevProvider({ provider: "anthropic", model: "claude-sonnet-4-6" })
  *
- * This file is deliberately thin — it is the only place that knows pi.dev's
- * concrete API shape. Everything above Layer 1 consumes the normalized
- * `PiStreamChunk` from `pi-client.ts`.
+ * This file is deliberately thin — it is the only place that knows Pi's
+ * concrete streaming API shape. Everything above Layer 1 consumes the
+ * normalized `PiStreamChunk` from `pi-client.ts`.
+ *
+ * Historical note: earlier versions targeted a package named `pi`; the Pi
+ * ecosystem now lives under the `@mariozechner/pi-*` scope (see
+ * github.com/badlogic/pi-mono).
  */
 
 export interface PiDevOptions {
@@ -37,12 +41,12 @@ export class PiDevProvider implements PiProviderLike {
     if (this.client) return;
     let mod: PiModule;
     try {
-      // @ts-ignore - optional dependency
-      mod = (await import("pi")) as unknown as PiModule;
+      // @ts-ignore - optional dependency; install with `npm install @mariozechner/pi-ai`
+      mod = (await import("@mariozechner/pi-ai")) as unknown as PiModule;
     } catch (e) {
       throw new PiHarnessError(
         "E_MODEL_ADAPTER",
-        "pi.dev package not installed. Run `npm install pi` to enable PiDevProvider.",
+        "Pi package not installed. Run `npm install @mariozechner/pi-ai` to enable PiDevProvider.",
         { cause: String(e) },
       );
     }

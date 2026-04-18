@@ -1,7 +1,7 @@
-import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
+import { FileHandle, mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { parseOrThrow, StreamEvent, TapeEventRecordSchema, TapeHeaderSchema, TapeRecord, TapeRecordSchema } from "../schemas/index.js";
-import { framedCanonical, sha256Hex } from "../schemas/canonical.js";
+import { sha256HexFramed } from "../schemas/canonical.js";
 import { PiHarnessError } from "../errors.js";
 
 const ZERO = "0".repeat(64);
@@ -21,6 +21,12 @@ export interface VerifyResult {
   digest?: string;
 }
 
+/**
+ * Initial crash-safe write for the tape header. Uses the classic write-to-tmp +
+ * fsync + rename + fsync(dir) dance so a crash mid-init leaves no partial tape.
+ * Only called once per session (for the header); subsequent events are appended
+ * via an open file handle — see ReplayRecorder below.
+ */
 async function safeWriteText(path: string, text: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = path + ".tmp";
@@ -44,11 +50,7 @@ async function safeWriteText(path: string, text: string): Promise<void> {
 }
 
 function hashRecord(record: Omit<TapeRecord, "recordHash">): string {
-  return "sha256:" + sha256Hex(framedCanonical("pi-tape-v1", record));
-}
-
-function serializeTape(records: TapeRecord[]): string {
-  return records.map((record) => JSON.stringify(record)).join("\n") + (records.length > 0 ? "\n" : "");
+  return "sha256:" + sha256HexFramed("pi-tape-v1", record);
 }
 
 function verifyRecordChain(record: TapeRecord, expectedPrevHash: string, lineNumber: number): { ok: true; digest: string } | { ok: false; error: string } {
@@ -128,14 +130,47 @@ export async function verifyTape(path: string): Promise<VerifyResult> {
   }
 }
 
+/**
+ * Append-only, crash-safe JSONL tape writer.
+ *
+ * Design:
+ *   - The header is committed via write-tmp + fsync + rename + fsync(dir) so
+ *     the initial file exists atomically (this also satisfies any observer
+ *     that scans the output dir expecting either "no file" or "valid file").
+ *   - Subsequent events are appended to an open FileHandle in O_APPEND mode.
+ *     POSIX guarantees that an O_APPEND write adjusts the offset and writes
+ *     atomically with respect to other appenders, and we fsync after each
+ *     append so the record is durable before writeEvent resolves.
+ *   - In-memory `records[]` is retained for callers that want the full tape
+ *     (e.g. replay/levelB), but the serialization hot-path no longer rewrites
+ *     the entire file on every event (was O(N^2); now O(N)).
+ *
+ * Crash semantics:
+ *   - A crash before fsync returns may lose the in-flight record entirely
+ *     (acceptable — writeEvent had not resolved) or leave a torn last line.
+ *     verifyTape already surfaces a torn final line as a clean
+ *     E_SCHEMA_PARSE / hash-mismatch result, so the contract holds.
+ */
 export class ReplayRecorder {
   private seq = 0;
   private prevHash = ZERO;
   private records: TapeRecord[] = [];
+  private handle: FileHandle | null = null;
+  private closed = false;
 
   constructor(private tapePath: string) {}
 
   async writeHeader(meta: ReplayHeaderInput): Promise<void> {
+    if (this.handle) {
+      // Reinitialization — close the old handle first.
+      await this.handle.close();
+      this.handle = null;
+    }
+    // Reset chain state so a re-initialized session always roots the new
+    // tape at the all-zero prevHash. Without this, a second writeHeader
+    // call would chain off the prior session's final recordHash even
+    // though the on-disk file is now a fresh tape.
+    this.prevHash = ZERO;
     const base = {
       type: "header" as const,
       schemaVersion: 1 as const,
@@ -151,10 +186,17 @@ export class ReplayRecorder {
     this.records = [record];
     this.prevHash = recordHash;
     this.seq = 0;
-    await safeWriteText(this.tapePath, serializeTape(this.records));
+    // Atomically install the header file.
+    await safeWriteText(this.tapePath, JSON.stringify(record) + "\n");
+    // Then open in append mode for subsequent events.
+    this.handle = await open(this.tapePath, "a");
+    this.closed = false;
   }
 
   async writeEvent(event: StreamEvent): Promise<void> {
+    if (!this.handle || this.closed) {
+      throw new PiHarnessError("E_TAPE_HASH", "writeEvent before writeHeader or after close", {});
+    }
     this.seq += 1;
     const base = {
       type: "event" as const,
@@ -164,16 +206,34 @@ export class ReplayRecorder {
       prevHash: this.prevHash,
     };
     const recordHash = hashRecord(base);
-    const record = TapeEventRecordSchema.safeParse({ ...base, recordHash });
-    if (!record.success) {
-      throw new PiHarnessError("E_TAPE_HASH", "invalid tape event record", { issues: record.error.issues });
+    const parsed = TapeEventRecordSchema.safeParse({ ...base, recordHash });
+    if (!parsed.success) {
+      throw new PiHarnessError("E_TAPE_HASH", "invalid tape event record", { issues: parsed.error.issues });
     }
-    this.records.push(record.data);
+    const record = parsed.data;
+    this.records.push(record);
     this.prevHash = recordHash;
-    await safeWriteText(this.tapePath, serializeTape(this.records));
+    // Append + fsync. O_APPEND guarantees atomic-offset writes; fsync makes
+    // the record durable before we resolve the promise.
+    await this.handle.appendFile(JSON.stringify(record) + "\n", "utf8");
+    await this.handle.sync();
   }
 
   digest(): string {
     return this.prevHash;
+  }
+
+  /**
+   * Close the underlying file handle. Safe to call more than once. Callers who
+   * don't explicitly close still get correct durability (each writeEvent
+   * fsyncs), but closing avoids leaking the handle.
+   */
+  async close(): Promise<void> {
+    if (this.handle && !this.closed) {
+      this.closed = true;
+      const h = this.handle;
+      this.handle = null;
+      await h.close();
+    }
   }
 }

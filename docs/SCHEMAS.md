@@ -26,6 +26,13 @@ Each schema lives in `src/schemas/<name>.ts` and is re-exported from `src/schema
 - `index.ts` — central re-export surface for schema modules
 - `parse.ts` — shared parse helper used for schema-validated reads
 
+> **0.4.0 note (canonical helpers):** `canonical.ts` gained a `FrameTag` type
+> alias and a streaming helper `sha256HexFramed(frame, value)` that feeds the
+> frame tag + separator + canonical JSON directly into a single `createHash`
+> call. Output is byte-identical to `sha256Hex(framedCanonical(frame, value))`;
+> committed `goldens/canonical/` digests are unchanged. No persisted-schema
+> surface changed, so no `schemaVersion` bump is required.
+
 ### Session / provenance / checkpoint
 - `sessionContext.ts` — persisted session-level identity and runtime context shape
 - `provenanceManifest.ts` — session start manifest written for the canonical run

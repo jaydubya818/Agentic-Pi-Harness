@@ -8,3 +8,5 @@ dist/
 .pi-out*/
 .pi-work*/
 vitest.config.ts.timestamp-*.mjs
+
+.golden/
