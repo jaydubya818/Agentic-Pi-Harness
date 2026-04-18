@@ -1,6 +1,6 @@
 {
   "name": "agentic-pi-harness",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "files": ["dist", "docs", "README.md", "LICENSE"],
   "description": "Tier A agent harness proof on Pi: canonical golden path, deterministic replay, effect capture, and crash-safe artifacts.",
   "type": "module",
@@ -31,13 +31,13 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
+    "@types/node": "^20.17.0",
     "eslint": "^8.57.0",
     "husky": "^9.0.0",
     "prettier": "^3.2.0",
-    "tsx": "^4.7.0",
-    "typescript": "^5.4.0",
-    "vitest": "^1.4.0"
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.2.4"
   },
   "keywords": ["agent", "harness", "pi", "claude-code", "replay", "agentic"],
   "license": "MIT"

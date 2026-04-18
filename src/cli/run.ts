@@ -87,27 +87,31 @@ export async function runGoldenPath(workdir: string, outRoot: string, opts: RunO
   const effects = new EffectRecorder();
 
   const tracePath = opts.tracePath;
-  const result = await runQueryLoop({
-    sessionId, model, tape, effects,
-    checkpointPath: join(sessionDir, "checkpoint.json"),
-    effectLogPath: effectLog,
-    policyLogPath: policyLog,
-    policyMode: "placeholder",
-    policyDigest,
-    tracePath,
-    tools: {
-      read_file: async (i: { path: string }) => ({
-        output: await readFile(i.path, "utf8"), paths: [i.path],
-      }),
-      write_file: async (i: { path: string; content: string }) => {
-        await writeFile(i.path, i.content);
-        return { output: `wrote ${i.path}`, paths: [i.path] };
+  try {
+    const result = await runQueryLoop({
+      sessionId, model, tape, effects,
+      checkpointPath: join(sessionDir, "checkpoint.json"),
+      effectLogPath: effectLog,
+      policyLogPath: policyLog,
+      policyMode: "placeholder",
+      policyDigest,
+      tracePath,
+      tools: {
+        read_file: async (i: { path: string }) => ({
+          output: await readFile(i.path, "utf8"), paths: [i.path],
+        }),
+        write_file: async (i: { path: string; content: string }) => {
+          await writeFile(i.path, i.content);
+          return { output: `wrote ${i.path}`, paths: [i.path] };
+        },
       },
-    },
-  });
+    });
 
-  await writeFile(join(sessionDir, "metrics.json"), JSON.stringify(result.counters, null, 2));
-  return sessionId;
+    await writeFile(join(sessionDir, "metrics.json"), JSON.stringify(result.counters, null, 2));
+    return sessionId;
+  } finally {
+    await tape.close();
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
