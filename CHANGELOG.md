@@ -2,6 +2,27 @@
 
 All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 
+## [0.4.0] — 2026-04-18
+
+Maintenance + perf release. Toolchain aligned with `@mariozechner/pi-coding-agent` v0.67.68. 53 test files, 159 tests, tsc clean, zero audit findings.
+
+### Changed
+- **Toolchain bump to match latest Pi stack** — TypeScript `5.4` → `5.7.3`, Vitest `1.4` → `3.2.4`, `@types/node` → `^20.17`, `tsx` → `^4.19`. Removed 4 moderate-severity vulnerabilities reported by `npm audit`.
+- **Lazy Pi import renamed** — `piDevProvider.ts` now imports `@mariozechner/pi-ai` instead of the legacy `pi` package name. Still an optional, deferred import (Tier B); the harness builds and tests without it. Install with `npm install @mariozechner/pi-ai` when activating a real provider.
+
+### Performance
+- **Tape writer is now append-only** — `ReplayRecorder.writeEvent()` previously rewrote the entire tape file with a tmp+rename+fsync dance on every event (O(N²) bytes). It now keeps an `O_APPEND` file handle open and appends + fsyncs each record, reducing per-event work to O(record size). The header still uses the atomic write-rename path so the initial file is crash-safe.
+- **Streaming frame hash** — new `sha256HexFramed(frame, value)` in `src/schemas/canonical.ts` feeds the frame tag, newline separator, and canonical JSON directly into a single `createHash("sha256")` call, avoiding the intermediate `Buffer.from(frame + "\n" + canonical)` allocation.
+- **Bench impact** — `tests/bench/hashChain.bench.test.ts` (N=2000): p50 `2.115ms` → `0.21ms` (~10×), p99 `5.97ms` → `0.37ms` (~16×). Full suite runtime `7.48s` → `2.55s`.
+- Hash-chain digests are identical to 0.3.x — the committed `goldens/canonical/` artifacts verify and replay unchanged.
+
+### Added
+- **End-to-end integration tests** — `tests/unit/runVerifyReplay.e2e.test.ts` drives `runGoldenPath` → `verifyTape` → `readTape` and checks tape/effect/policy/checkpoint outputs from scratch. Fills the run→verify→replay gap previously only covered at the unit level.
+- `ReplayRecorder#close()` — explicit close for the append file handle. Called by the CLI in a `finally` block so crashes during a run don't leak the handle.
+
+### Fixed
+- Eliminated a file-handle leak path: writers that re-used a `ReplayRecorder` across headers now close the prior handle before opening the new one.
+
 ## [0.3.0] — 2026-04-08
 
 Tier C continued. 28 test files, 84 tests, tsc clean. Zero new runtime deps. Windows support explicitly deferred.
