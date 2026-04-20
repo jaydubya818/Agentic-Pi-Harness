@@ -14,6 +14,12 @@ This repo currently ships the **canonical golden path only**:
 
 Deferred Tier B/C topics such as provider integration, hooks, compaction, concurrency, worktrees, rollback, and richer observability are intentionally out of scope for this proof.
 
+This repo now also includes an **experimental Hermes worker adapter** that lets Pi supervise a local Hermes CLI process through a clean external contract. See [`docs/HERMES-ADAPTER.md`](docs/HERMES-ADAPTER.md).
+
+Hermes discovery defaults on this machine-family:
+- binary: `~/.local/bin/hermes`
+- repo: `~/.hermes/hermes-agent`
+
 > **Release note:** this release covers **Tier A only** — the canonical golden path and its deterministic proof artifacts. Tier B and other deferred features are intentionally not implemented in this release candidate.
 
 [![CI](https://github.com/jaydubya818/Agentic-Pi-Harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jaydubya818/Agentic-Pi-Harness/actions/workflows/ci.yml)
@@ -237,12 +243,67 @@ pi-harness verify <tape.jsonl>
 pi-harness what-changed <effects.jsonl>
 pi-harness inspect <policy.jsonl>
 pi-harness replay <tape.jsonl>
+pi-harness hermes-demo [--workdir <path>] [--output-dir <path>] [--objective <text>]
+pi-harness hermes-smoke [--workdir <path>] [--output-dir <path>]
+pi-harness hermes-run [--workdir <path>] [--out-root <path>] [--objective <text>]
+pi-harness hermes-bridge [--host <host>] [--port <port>] [--auth-token <token>] [--state-root <path>]
+pi-harness hermes-doctor [--url <url>] [--token-file <path>] [--workdir <path>]
 ```
 
 During development you can run the TypeScript entrypoint directly:
 
 ```bash
 npm run dev -- run ./.pi-work ./.pi-out
+```
+
+Hermes demo:
+
+```bash
+npm run hermes:demo -- --workdir "$PWD"
+```
+
+Hermes two-step smoke test:
+
+```bash
+npm run hermes:smoke -- --workdir "$PWD"
+```
+
+Higher-level Pi orchestration path:
+
+```bash
+npm run hermes:run -- --workdir "$PWD" --out-root "$PWD/.pi-hermes-out"
+```
+
+Local HTTP bridge:
+
+```bash
+npm run hermes:bridge -- --host 127.0.0.1 --port 8787 --auth-token "$PI_HERMES_BRIDGE_TOKEN"
+```
+
+Bridge state persists by default under:
+
+```bash
+~/.pi/hermes-bridge-state
+```
+
+Override with `--state-root <path>` if needed.
+
+Hermes doctor:
+
+```bash
+npm run hermes:doctor -- --url http://127.0.0.1:8787
+```
+
+When you want Pi to inspect Hermes itself, point `--workdir` at:
+
+```bash
+~/.hermes/hermes-agent
+```
+
+When you want Pi to launch Hermes explicitly, point `--command` at:
+
+```bash
+~/.local/bin/hermes
 ```
 
 ---
