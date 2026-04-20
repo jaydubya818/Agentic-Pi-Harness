@@ -1,28 +1,96 @@
 # Agentic Pi Harness
 
-Deterministic **Tier A** agent harness proof built on Pi’s TypeScript runtime patterns.
-
-This repo currently ships the **canonical golden path only**:
-- mock model only
-- one real read tool: `read_file`
-- one real mutating tool: `write_file`
-- crash-safe provenance + checkpoint writes
-- hash-chained replay tape
-- effect log
-- placeholder policy decisions
-- thin CLIs for `run`, `verify`, `what-changed`, `inspect`, `replay`, and `doctor`
-
-Deferred Tier B/C topics such as provider integration, hooks, compaction, concurrency, worktrees, rollback, and richer observability are intentionally out of scope for this proof.
-
-This repo now also includes an **experimental Hermes worker adapter** that lets Pi supervise a local Hermes CLI process through a clean external contract. See [`docs/HERMES-ADAPTER.md`](docs/HERMES-ADAPTER.md).
-
-Hermes discovery defaults on this machine-family:
-- binary: `~/.local/bin/hermes`
-- repo: `~/.hermes/hermes-agent`
-
-> **Release note:** this release covers **Tier A only** — the canonical golden path and its deterministic proof artifacts. Tier B and other deferred features are intentionally not implemented in this release candidate.
+Governed execution harness for **Pi-supervised worker runtimes**, with a hardened **Pi ↔ Hermes** bridge, versioned contracts, structured run state, KB/Wiki policy enforcement, and contract-tested execution.
 
 [![CI](https://github.com/jaydubya818/Agentic-Pi-Harness/actions/workflows/ci.yml/badge.svg)](https://github.com/jaydubya818/Agentic-Pi-Harness/actions/workflows/ci.yml)
+
+---
+
+## What this repo is now
+
+This repo started as a deterministic Tier A harness proof. It now also contains a **governed execution model** for supervised worker runtimes.
+
+Current implemented direction:
+
+- **Pi** as supervisor / orchestrator
+- **Hermes** as a governed worker
+- **Bridge-routed governed execution**
+- **Versioned execution contract**
+- **Persistent run state**
+- **Structured events**
+- **Preflight denial persistence**
+- **KB / Wiki access policy enforcement**
+- **Append-only traces**
+- **Immutable mission request records**
+- **Promotion lineage into canonical knowledge**
+- **Bridge-only safety mode for governed execution**
+
+This repo is no longer just golden-path replay. It now contains the beginnings of a reusable control plane for governed agent execution.
+
+Relevant docs:
+- [`PI_HERMES_CONTRACT_V2.md`](PI_HERMES_CONTRACT_V2.md)
+- [`KB_ACCESS_POLICY_V1.md`](KB_ACCESS_POLICY_V1.md)
+- [`GOVERNED_EXECUTION_MODEL_V1.md`](GOVERNED_EXECUTION_MODEL_V1.md)
+- [`docs/HERMES-ADAPTER.md`](docs/HERMES-ADAPTER.md)
+
+---
+
+## Core model
+
+### Roles
+
+- **Pi**: supervisor, governor, promoter of canonical truth
+- **Hermes**: governed worker
+- **Bridge**: the required control-plane boundary for governed execution
+
+### Knowledge model
+
+Two local knowledge repositories are supported by policy and runtime enforcement:
+
+- `~/Agentic-KB` — governed operational memory / system of record
+- `~/My LLM Wiki` — broader research, synthesis, and working knowledge
+
+### Write model
+
+Pi may govern and promote canonical knowledge.
+
+Hermes is intentionally constrained to bounded non-canonical write zones such as:
+
+- `~/My LLM Wiki/**`
+- `~/Agentic-KB/queues/discovery/**`
+- `~/Agentic-KB/handoffs/inbound/**`
+- `~/Agentic-KB/missions/**/outputs/**`
+- `~/Agentic-KB/missions/**/traces/**`
+
+Hermes is blocked from canonical KB paths such as:
+
+- `~/Agentic-KB/contracts/**`
+- `~/Agentic-KB/standards/**`
+- `~/Agentic-KB/knowledge/**`
+- `~/Agentic-KB/staging/normalized/**`
+- `~/Agentic-KB/supervision/**`
+
+---
+
+## Claude Code concise mode
+
+This repo now ships a repo-local Claude Code default for concise engineering output:
+
+- Caveman is installed for Claude Code via the official plugin marketplace
+- repo-local default mode is **Caveman lite** via `.claude/settings.json`
+- repo-local usage guidance lives in [`CLAUDE.md`](CLAUDE.md)
+
+Intended effect:
+- concise normal responses
+- concise code review comments
+- concise commit message suggestions
+- compressed wording without dropping technical substance
+
+To change the default level later, update:
+- `.claude/settings.json` → `env.CAVEMAN_DEFAULT_MODE`
+
+Current default:
+- `lite`
 
 ---
 
