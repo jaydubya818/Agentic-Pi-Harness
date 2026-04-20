@@ -1,5 +1,10 @@
 #!/usr/bin/env node
 import { doctor } from "./doctor.js";
+import { runHermesBridgeCli } from "./hermes-bridge.js";
+import { runHermesDemo } from "./hermes-demo.js";
+import { runHermesDoctorCli } from "./hermes-doctor.js";
+import { runHermesRunCli } from "./hermes-run.js";
+import { runHermesSmoke } from "./hermes-smoke.js";
 import { inspectPolicy } from "./inspect.js";
 import { replayTape } from "./replay.js";
 import { parseRunCliArgs, runGoldenPath } from "./run.js";
@@ -17,6 +22,29 @@ async function main() {
   switch (cmd) {
     case "doctor": {
       const checks = await doctor();
+      for (const check of checks) {
+        console.log(`${check.ok ? "✓" : "✗"} ${check.name}${check.detail ? " (" + check.detail + ")" : ""}`);
+      }
+      process.exit(checks.every((check) => check.ok) ? 0 : 1);
+    }
+    case "hermes-demo": {
+      await runHermesDemo(rest);
+      return;
+    }
+    case "hermes-smoke": {
+      await runHermesSmoke(rest);
+      return;
+    }
+    case "hermes-run": {
+      await runHermesRunCli(rest);
+      return;
+    }
+    case "hermes-bridge": {
+      await runHermesBridgeCli(rest);
+      return;
+    }
+    case "hermes-doctor": {
+      const checks = await runHermesDoctorCli(rest);
       for (const check of checks) {
         console.log(`${check.ok ? "✓" : "✗"} ${check.name}${check.detail ? " (" + check.detail + ")" : ""}`);
       }
@@ -54,7 +82,7 @@ async function main() {
       process.exit(await replayTape(tapePath));
     }
     default:
-      console.error("usage: pi-harness <doctor|run|verify|what-changed|inspect|replay> [args]");
+      console.error("usage: pi-harness <doctor|run|verify|what-changed|inspect|replay|hermes-demo|hermes-smoke|hermes-run|hermes-bridge|hermes-doctor> [args]");
       process.exit(2);
   }
 }

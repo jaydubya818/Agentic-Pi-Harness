@@ -1,7 +1,12 @@
 {
   "name": "agentic-pi-harness",
   "version": "0.4.0",
-  "files": ["dist", "docs", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "docs",
+    "README.md",
+    "LICENSE"
+  ],
   "description": "Tier A agent harness proof on Pi: canonical golden path, deterministic replay, effect capture, and crash-safe artifacts.",
   "type": "module",
   "main": "dist/index.js",
@@ -17,6 +22,11 @@
     "lint": "eslint src tests",
     "dev": "tsx src/cli/index.ts",
     "doctor": "tsx src/cli/doctor.ts",
+    "hermes:bridge": "tsx src/cli/hermes-bridge.ts",
+    "hermes:doctor": "tsx src/cli/hermes-doctor.ts",
+    "hermes:demo": "tsx src/cli/hermes-demo.ts",
+    "hermes:run": "tsx src/cli/hermes-run.ts",
+    "hermes:smoke": "tsx src/cli/hermes-smoke.ts",
     "verify": "tsx src/cli/verify.ts",
     "replay": "tsx src/cli/replay.ts",
     "what-changed": "tsx src/cli/what-changed.ts",
@@ -28,6 +38,7 @@
     "node": ">=20.11.0"
   },
   "dependencies": {
+    "node-pty": "^1.1.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
@@ -39,6 +50,13 @@
     "typescript": "^5.7.3",
     "vitest": "^3.2.4"
   },
-  "keywords": ["agent", "harness", "pi", "claude-code", "replay", "agentic"],
+  "keywords": [
+    "agent",
+    "harness",
+    "pi",
+    "claude-code",
+    "replay",
+    "agentic"
+  ],
   "license": "MIT"
 }
