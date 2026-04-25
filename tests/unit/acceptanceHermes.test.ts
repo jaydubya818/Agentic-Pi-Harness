@@ -1,12 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as hermesDoctorModule from "../../src/cli/hermes-doctor.js";
 import { runHermesAcceptance } from "../../src/cli/acceptance-hermes.js";
+import { HermesBridgeServer } from "../../src/hermes/httpBridge.js";
 
 const createdPaths: string[] = [];
-const originalHermesCommand = process.env.HERMES_COMMAND;
-const originalHermesRepoPath = process.env.HERMES_REPO_PATH;
 
 async function makeTempDir(prefix: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), prefix));
@@ -15,31 +15,45 @@ async function makeTempDir(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
-  process.env.HERMES_COMMAND = originalHermesCommand;
-  process.env.HERMES_REPO_PATH = originalHermesRepoPath;
+  vi.restoreAllMocks();
   await Promise.all(createdPaths.splice(0).reverse().map((path) => rm(path, { recursive: true, force: true })));
 });
 
 describe("runHermesAcceptance", () => {
   it("runs in embedded mode without an external bridge or token setup", async () => {
     const repoPath = await makeTempDir("pi-hermes-acceptance-repo-");
-    process.env.HERMES_COMMAND = process.execPath;
-    process.env.HERMES_REPO_PATH = repoPath;
+    const doctorChecks = [
+      { name: "bridge execute smoke test completes", ok: true, detail: "completed" },
+      { name: "transport is PTY", ok: true, detail: "pty" },
+    ];
+
+    const startSpy = vi.spyOn(HermesBridgeServer.prototype, "start").mockResolvedValue({ host: "127.0.0.1", port: 43123 });
+    const stopSpy = vi.spyOn(HermesBridgeServer.prototype, "stop").mockResolvedValue();
+    const doctorSpy = vi.spyOn(hermesDoctorModule, "runHermesDoctor").mockResolvedValue(doctorChecks);
 
     const result = await runHermesAcceptance({
       mode: "embedded",
       workdir: repoPath,
-      timeoutMs: 15000,
+      timeoutMs: 15_000,
       adapterOptions: {
         command: process.execPath,
-        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
         preferTransport: "pty",
       },
     });
 
-    expect(result.mode).toBe("embedded");
-    expect(result.bridgeUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-    expect(result.ok).toBe(true);
-    expect(result.checks.every((check) => check.ok)).toBe(true);
-  }, 20_000);
+    expect(result).toEqual({
+      ok: true,
+      mode: "embedded",
+      bridgeUrl: "http://127.0.0.1:43123",
+      checks: doctorChecks,
+    });
+    expect(startSpy).toHaveBeenCalledOnce();
+    expect(stopSpy).toHaveBeenCalledOnce();
+    expect(doctorSpy).toHaveBeenCalledOnce();
+    expect(doctorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      url: "http://127.0.0.1:43123",
+      workdir: repoPath,
+      timeoutMs: 15_000,
+    }));
+  });
 });
