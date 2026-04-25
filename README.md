@@ -284,7 +284,10 @@ Useful commands:
 ```bash
 npm run golden:verify
 npm run golden:replay
+npm run bench
 ```
+
+`npm test` covers the deterministic unit/fuzz/chaos suite. The hash-chain microbench is opt-in via `npm run bench` because its latency ceiling is environment-sensitive.
 
 The CI workflow also runs the golden path and compares the produced artifacts against these committed golden files.
 
@@ -316,6 +319,11 @@ pi-harness hermes-smoke [--workdir <path>] [--output-dir <path>]
 pi-harness hermes-run [--workdir <path>] [--out-root <path>] [--objective <text>]
 pi-harness hermes-bridge [--host <host>] [--port <port>] [--auth-token <token>] [--state-root <path>]
 pi-harness hermes-doctor [--url <url>] [--token-file <path>] [--workdir <path>]
+
+npm run lint
+npm run typecheck
+npm test
+npm run bench
 ```
 
 During development you can run the TypeScript entrypoint directly:
