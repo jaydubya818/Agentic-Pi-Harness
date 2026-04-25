@@ -2,7 +2,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { detectHermes, ensureKnowledgeDirectorySkeleton } from "../hermes/index.js";
+import { detectHermes, ensureKnowledgeDirectorySkeleton, type KnowledgeRoots } from "../hermes/index.js";
 
 export interface HermesDoctorCheck {
   name: string;
@@ -16,6 +16,8 @@ export interface HermesDoctorOptions {
   tokenFile?: string;
   workdir?: string;
   timeoutMs?: number;
+  pollIntervalMs?: number;
+  knowledgeRoots?: Partial<KnowledgeRoots>;
 }
 
 interface HermesMetaResponse {
@@ -89,6 +91,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
   const timeoutMs = options.timeoutMs ?? 120000;
   const token = options.token ?? process.env.PI_HERMES_BRIDGE_TOKEN ?? await readTokenFile(tokenFile);
   const workdir = options.workdir ?? detected.repoPath ?? process.cwd();
+  const pollIntervalMs = options.pollIntervalMs ?? 500;
 
   checks.push({
     name: "detected Hermes binary path",
@@ -147,7 +150,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
     detail: meta.repoPath ?? "null",
   });
 
-  const knowledgeRoots = await ensureKnowledgeDirectorySkeleton();
+  const knowledgeRoots = await ensureKnowledgeDirectorySkeleton(options.knowledgeRoots);
   const outputDir = await mkdtemp(join(knowledgeRoots.llmWikiRoot, "inbox", "pi-hermes-doctor-"));
   try {
     const sessionResponse = await fetch(`${url}/sessions`, {
@@ -200,7 +203,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
       const runResponse = await fetch(`${url}/runs/${accepted.execution_id}`, { headers: authHeaders });
       run = await runResponse.json() as HermesRunResponse;
       if (["completed", "failed", "cancelled", "interrupted"].includes(run.status)) break;
-      await sleep(500);
+      await sleep(pollIntervalMs);
     }
 
     checks.push({
