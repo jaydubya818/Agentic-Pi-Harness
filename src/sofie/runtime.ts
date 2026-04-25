@@ -5,14 +5,18 @@ import { readEffectLog } from "../effect/recorder.js";
 import { readPolicyLog } from "../policy/decision.js";
 import { readProvenance } from "../session/provenance.js";
 import { EffectRecord, PolicyDecision } from "../schemas/index.js";
-import { SofieAnswer, SofieContext, answerRoutineQuestion, makeApprovalSummaries } from "./authority.js";
+import { SofieAnswer, SofieContext, SofieToolEvidence, answerRoutineQuestion, makeApprovalSummaries } from "./authority.js";
 
 export interface SofieSessionArtifacts {
   sessionId: string;
   outRoot: string;
+  mode?: SofieContext["mode"];
   approvals?: ApprovalDecision[];
   frictionFindings?: string[];
   tapeEventTypes?: string[];
+  toolEvidence?: SofieToolEvidence[];
+  targetRepo?: SofieContext["targetRepo"];
+  targetSummary?: SofieContext["targetSummary"];
 }
 
 async function tryReadJson<T>(path: string): Promise<T | null> {
@@ -55,12 +59,13 @@ export async function buildSofieContextFromSession(input: SofieSessionArtifacts,
 
   return {
     sessionId: input.sessionId,
-    mode: "assist",
+    mode: input.mode ?? "assist",
     question,
     kind,
     tapeEventTypes: input.tapeEventTypes,
     effects,
     decisions,
+    toolEvidence: input.toolEvidence,
     approvals: makeApprovalSummaries(input.approvals ?? []),
     provenance: provenance
       ? {
@@ -75,6 +80,8 @@ export async function buildSofieContextFromSession(input: SofieSessionArtifacts,
       ...(input.frictionFindings ?? []),
       ...(checkpoint?.stopReason ? [`stopReason=${checkpoint.stopReason}`] : []),
     ],
+    targetRepo: input.targetRepo,
+    targetSummary: input.targetSummary,
   };
 }
 
