@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { replayTape } from "../../src/cli/replay.js";
 import { whatChanged } from "../../src/cli/what-changed.js";
 import { inspectPolicy } from "../../src/cli/inspect.js";
+import { runMemoryCli } from "../../src/cli/memory.js";
 import { ReplayRecorder } from "../../src/replay/recorder.js";
 import { appendEffectRecord } from "../../src/effect/recorder.js";
 import { appendPolicyDecision, placeholderApprove } from "../../src/policy/decision.js";
@@ -76,5 +77,15 @@ describe("thin CLIs", () => {
     const output = await inspectPolicy(path);
     expect(output).toContain("tool-1 approve provenance=placeholder");
     expect(output).toContain("policyDigest=sha256:policy-test");
+  });
+
+  it("memory CLI degrades gracefully when Agentic-KB access is disabled", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runMemoryCli(["search", "hermes bridge", "--access-mode", "disabled"]);
+      expect(logSpy).toHaveBeenCalledWith("[]");
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });
