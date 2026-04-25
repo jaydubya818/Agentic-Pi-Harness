@@ -79,8 +79,9 @@ gh release create vX.Y.Z --title "vX.Y.Z" --notes-file <(sed -n "/^## \[X.Y.Z\]/
 - Sandbox environments cannot unlink `.git/*.lock` files. Release
   commits must run on the host, not inside a container mount. See
   `scripts/host-release.sh` for the script we used.
-- GitHub-hosted runners are 3–5x slower than a laptop on hash-bench.
-  `tests/bench/hashChain.bench.test.ts` has env-aware ceilings; don't
-  tighten the local one without also tightening CI's.
+- Hash-chain bench is storage-sensitive across laptops and CI runners.
+  `tests/bench/hashChain.bench.test.ts` exposes an env-aware ceiling via
+  `PI_HASHCHAIN_BENCH_CEILING_MS` (defaults 12ms local / 16ms CI); don't
+  tighten it without fresh local + CI data.
 - `npm version` without `--no-git-tag-version` will create an extra tag
   that collides with step 4. Always pass the flag.
