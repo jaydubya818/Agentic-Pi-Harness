@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { printHermesAcceptanceResult, runHermesAcceptanceCli } from "./acceptance-hermes.js";
+import { printPiAcceptanceResult, runPiAcceptanceCli } from "./acceptance-pi.js";
 import { doctor } from "./doctor.js";
 import { runHermesBridgeCli } from "./hermes-bridge.js";
 import { runHermesDemo } from "./hermes-demo.js";
@@ -26,6 +28,16 @@ async function main() {
         console.log(`${check.ok ? "✓" : "✗"} ${check.name}${check.detail ? " (" + check.detail + ")" : ""}`);
       }
       process.exit(checks.every((check) => check.ok) ? 0 : 1);
+    }
+    case "acceptance-hermes": {
+      const result = await runHermesAcceptanceCli(rest);
+      printHermesAcceptanceResult(result);
+      process.exit(result.ok ? 0 : 1);
+    }
+    case "acceptance-pi": {
+      const result = await runPiAcceptanceCli(rest);
+      printPiAcceptanceResult(result);
+      process.exit(result.ok ? 0 : 1);
     }
     case "hermes-demo": {
       await runHermesDemo(rest);
@@ -82,7 +94,7 @@ async function main() {
       process.exit(await replayTape(tapePath));
     }
     default:
-      console.error("usage: pi-harness <doctor|run|verify|what-changed|inspect|replay|hermes-demo|hermes-smoke|hermes-run|hermes-bridge|hermes-doctor> [args]");
+      console.error("usage: pi-harness <doctor|run|verify|what-changed|inspect|replay|hermes-demo|hermes-smoke|hermes-run|hermes-bridge|hermes-doctor|acceptance-hermes|acceptance-pi> [args]");
       process.exit(2);
   }
 }

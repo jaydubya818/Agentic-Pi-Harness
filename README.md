@@ -319,6 +319,10 @@ pi-harness hermes-smoke [--workdir <path>] [--output-dir <path>]
 pi-harness hermes-run [--workdir <path>] [--out-root <path>] [--objective <text>]
 pi-harness hermes-bridge [--host <host>] [--port <port>] [--auth-token <token>] [--state-root <path>]
 pi-harness hermes-doctor [--url <url>] [--token-file <path>] [--workdir <path>]
+pi-harness acceptance-hermes [--url <url>] [--token-file <path>] [--workdir <path>]
+pi-harness acceptance-pi [workdir] [outRoot] [--trace=<path>]
+kb session acceptance hermes [--url <url>] [--token-file <path>] [--workdir <path>]
+kb session acceptance pi [workdir] [outRoot] [--trace=<path>]
 
 npm run lint
 npm run typecheck
@@ -368,6 +372,30 @@ Hermes doctor:
 
 ```bash
 npm run hermes:doctor -- --url http://127.0.0.1:8787
+```
+
+Hermes acceptance helper (self-contained by default — it starts a temporary local bridge and token automatically):
+
+```bash
+npm run acceptance:hermes
+# or
+kb session acceptance hermes
+```
+
+To target an already-running external bridge instead:
+
+```bash
+npm run acceptance:hermes -- --url http://127.0.0.1:8787
+# or
+kb session acceptance hermes --url http://127.0.0.1:8787
+```
+
+Pi acceptance helper:
+
+```bash
+npm run acceptance:pi
+# or
+kb session acceptance pi
 ```
 
 When you want Pi to inspect Hermes itself, point `--workdir` at:
