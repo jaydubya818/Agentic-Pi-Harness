@@ -13,7 +13,7 @@ a 1–5 scale; mitigations map to existing code or roadmap items.
 | R6 | Retry loop double-writes tape on transient error | 1 | 4 | 4 | runtime | Manual `iter.next()` wrap, `loopRetry.test.ts` |
 | R7 | Compaction mutates in place, tape diverges from memory | 1 | 4 | 4 | runtime | ADR 0003, immutable `LoopResult.events` |
 | R8 | Hook timeout stalls turn | 2 | 3 | 6 | runtime | Per-hook `withTimeout`, `hooksConcurrency.test.ts` |
-| R9 | Hash-chain latency regresses on slow CPUs | 3 | 2 | 6 | runtime | `hashChain.bench.test.ts` env-aware (2ms local / 6ms CI) |
+| R9 | Hash-chain latency regresses on slow CPUs / slow storage | 3 | 2 | 6 | runtime | `hashChain.bench.test.ts` opt-in env-aware ceiling (`PI_HASHCHAIN_BENCH_CEILING_MS`, defaults 12ms local / 16ms CI) |
 | R10 | Replay drift between two runs not caught in CI | 2 | 4 | 8 | ci | `.github/workflows/ci.yml` replay-drift job, `scripts/compare-effects.mjs` path-agnostic |
 | R11 | Signed policy key leaks via process env | 2 | 5 | 10 | ops | Documented in HOOK-SECURITY.md — keys loaded from env, rotated via normal secret rotation |
 | R12 | Dependency (zod) vulnerability | 2 | 3 | 6 | ops | Only one runtime dep; `npm audit` on CI (not yet wired — add in 0.1.1) |
