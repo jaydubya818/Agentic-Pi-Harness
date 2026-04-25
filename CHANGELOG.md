@@ -11,6 +11,17 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 ### Changed
 - Hash-chain bench ceilings are now explicitly env-configurable via `PI_HASHCHAIN_BENCH_CEILING_MS`, with defaults widened to `12ms` local / `16ms` CI for slower storage/runner variance.
 
+## [0.70.2] — 2026-04-25
+
+### Added
+- Acceptance helpers: `pi-harness acceptance-hermes` and `pi-harness acceptance-pi`.
+- `kb` CLI entrypoint with `kb session acceptance hermes` and `kb session acceptance pi`.
+- Hermes acceptance helper can now run in self-contained embedded mode without a pre-started bridge, token file, or KB server.
+- Saved acceptance runbooks under `wiki/personal/agent-bootstrap/` for Hermes and Pi.
+
+### Changed
+- Version bump to `0.70.2`.
+
 ## [0.4.0] — 2026-04-18
 
 Maintenance + perf release. Toolchain aligned with `@mariozechner/pi-coding-agent` v0.67.68. 55 test files, 166 tests, tsc clean, zero audit findings.
