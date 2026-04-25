@@ -80,9 +80,29 @@ function hasAny(text: string, needles: string[]): boolean {
   return needles.some((needle) => text.includes(needle));
 }
 
+// Project-specific frozen-contract markers (Agentic-Pi-Harness).
+const FROZEN_CONTRACT_MARKERS = [
+  "mission control ui", "canonical golden", "goldens", "proof-path cli",
+  "artifact filename", "artifact location", "milestone semantic", "free-roaming second builder",
+];
+
+// Generic scope-expansion signals applicable to any project.
+const GENERIC_SCOPE_DRIFT_MARKERS = [
+  "out of scope", "out-of-scope", "not in scope", "scope change", "scope expansion",
+  "new requirement", "added requirement", "feature request", "new feature",
+  "beyond the task", "outside the task", "unrelated to",
+  "rename the", "move files", "restructure the",
+  "change the api", "change the interface", "change the schema", "change the contract",
+];
+
 export function detectScopeDrift(context: SofieContext): boolean {
   const text = normalized(`${context.question} ${(context.frictionFindings ?? []).join(" ")}`);
-  return hasAny(text, ["mission control ui", "canonical golden", "goldens", "proof-path cli", "artifact filename", "artifact location", "milestone semantic", "free-roaming second builder"]);
+  return hasAny(text, FROZEN_CONTRACT_MARKERS) || hasAny(text, GENERIC_SCOPE_DRIFT_MARKERS);
+}
+
+export function detectIncompleteExecution(context: SofieContext): boolean {
+  const types = context.tapeEventTypes ?? [];
+  return types.includes("tool_use") && !types.includes("tool_result");
 }
 
 export function summarizeRoutineEvidence(context: SofieContext): string[] {
@@ -92,6 +112,12 @@ export function summarizeRoutineEvidence(context: SofieContext): string[] {
   details.push(`policyDecisions=${context.decisions?.length ?? 0}`);
   details.push(`toolEvidence=${context.toolEvidence?.length ?? 0}`);
   details.push(`approvals=${context.approvals?.length ?? 0}`);
+  if (context.tapeEventTypes?.length) {
+    details.push(`tapeEvents=${context.tapeEventTypes.join(",")}`);
+    if (detectIncompleteExecution(context)) {
+      details.push("tapeWarning=tool_use_without_result");
+    }
+  }
   if (context.provenance?.provider || context.provenance?.model) {
     details.push(`provider=${context.provenance.provider ?? "unknown"} model=${context.provenance.model ?? "unknown"}`);
   }
@@ -117,7 +143,10 @@ export function detectAmbiguousBusinessDecision(context: SofieContext): boolean 
 }
 
 function isDestructiveToolName(toolName: string): boolean {
-  return ["delete_file", "rm", "git_push", "deploy"].includes(toolName.toLowerCase());
+  return [
+    "delete_file", "rm", "git_push", "deploy",
+    "bash", "run_command", "execute", "overwrite_file", "shell", "exec",
+  ].includes(toolName.toLowerCase());
 }
 
 export function detectDestructiveActionOutsidePolicy(context: SofieContext): boolean {
