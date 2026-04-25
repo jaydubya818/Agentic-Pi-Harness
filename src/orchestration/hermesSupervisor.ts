@@ -1,8 +1,7 @@
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { NoopLogger, type Logger } from "../obs/logger.js";
-import { digestPolicy, writeSessionStartProvenance } from "../session/provenance.js";
-import { ContextPackBuilder, type ContextPackSource } from "../memory/contextPackBuilder.js";
-import type { MemoryProvider } from "../memory/types.js";
+import { appendMemoryContextToObjective, type MemoryContextPack, type MemoryProvider } from "../memory/index.js";
+import type { ContextPackSource } from "../memory/contextPackBuilder.js";
 import {
   runTaskViaBridge,
   type BridgeGovernedRun,
@@ -69,11 +68,6 @@ export { type MemoryProvider };
 export async function runHermesSupervisorTask(input: RunHermesSupervisorInput): Promise<HermesSupervisorRun> {
   const logger = input.logger ?? new NoopLogger();
   const outRoot = resolve(input.outRoot);
-  const policyDigest = digestPolicy({
-    supervisor: "hermes",
-    allowedTools: input.allowedTools ?? ["bash", "git", "python"],
-    allowedActions: input.allowedActions ?? ["read", "write", "patch", "test"],
-  });
 
   let objective = input.objective;
   let contextReport: HermesExecutionContextReport = {
@@ -98,22 +92,19 @@ export async function runHermesSupervisorTask(input: RunHermesSupervisorInput): 
           fallback_reason: health.reason ?? "memory provider unavailable",
         };
       } else {
-        const searchResults = await input.memoryProvider.search(input.memoryQuery ?? input.objective, { limit: 5 });
-        const agentContext = input.memoryAgentId
-          ? await input.memoryProvider.loadAgentContext(input.memoryAgentId, { project: input.memoryProject })
-          : null;
-        const pack = new ContextPackBuilder().build({
-          task: input.objective,
-          maxChars: input.memoryContextBudgetChars ?? 6000,
-          memoryResults: searchResults,
-          agentContext,
+        const pack = await input.memoryProvider.buildContextPack({
+          query: input.memoryQuery ?? input.objective,
+          agentId: input.memoryAgentId,
+          project: input.memoryProject,
+          budgetChars: input.memoryContextBudgetChars ?? 6000,
         });
-        objective = pack.taskPrompt;
+        objective = appendMemoryContextToObjective(input.objective, pack);
         contextReport = {
           ...contextReport,
-          memory_used: pack.memoryUsed,
-          agent_context_loaded: pack.agentContextLoaded,
-          sources: pack.sources,
+          memory_used: pack.used,
+          agent_context_loaded: pack.items.some((item) => item.kind === "agent-context"),
+          sources: mapContextSources(pack),
+          fallback_reason: pack.used || pack.available ? contextReport.fallback_reason : firstWarning(pack),
         };
       }
     }
@@ -143,17 +134,6 @@ export async function runHermesSupervisorTask(input: RunHermesSupervisorInput): 
     adapterOptions: input.adapterOptions,
   });
 
-  await writeSessionStartProvenance(join(result.session_dir, "provenance.json"), {
-    sessionId: result.pi_session_id,
-    loopGitSha: "dev",
-    repoGitSha: null,
-    provider: "hermes-bridge",
-    model: "hermes-agent",
-    costTableVersion: "n/a",
-    piMdDigest: null,
-    policyDigest,
-  });
-
   return {
     ...result,
     context_report: {
@@ -161,4 +141,17 @@ export async function runHermesSupervisorTask(input: RunHermesSupervisorInput): 
       fallback_reason: result.bridge_fallback_reason ?? contextReport.fallback_reason,
     },
   };
+}
+
+function mapContextSources(pack: MemoryContextPack): ContextPackSource[] {
+  return pack.items.map((item) => ({
+    kind: item.kind === "search" ? "memory" : "agent_context",
+    title: item.title,
+    path: item.path ?? item.slug ?? item.title,
+    slug: item.slug,
+  }));
+}
+
+function firstWarning(pack: MemoryContextPack): string | undefined {
+  return pack.warnings[0];
 }

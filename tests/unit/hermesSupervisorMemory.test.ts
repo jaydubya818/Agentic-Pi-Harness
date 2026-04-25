@@ -27,36 +27,47 @@ describe("runHermesSupervisorTask memory integration", () => {
         return { enabled: true, ok: true, mode: "local" };
       },
       async buildContextPack() {
-        throw new Error("not used in this test");
+        return {
+          used: true,
+          available: true,
+          source: "local",
+          query: "pi bootstrap",
+          agentId: "gsd-executor",
+          items: [
+            {
+              kind: "search",
+              slug: "personal/agent-bootstrap/pi",
+              title: "Pi Bootstrap Append",
+              path: "wiki/personal/agent-bootstrap/pi.md",
+              reason: "search match",
+              excerpt: "Pi should load context before execution.",
+              score: 5,
+              source: "local",
+            },
+            {
+              kind: "agent-context",
+              title: "Worker hot",
+              path: "wiki/agents/workers/gsd-executor/hot.md",
+              reason: "class=hot scope=self",
+              excerpt: "Worker hot context.",
+              source: "local",
+            },
+          ],
+          text: "Advisory memory context from Agentic-KB. Pi should load context before execution.",
+          budgetChars: 6000,
+          usedChars: 82,
+          truncated: false,
+          warnings: [],
+        };
       },
       async search() {
-        return [
-          {
-            slug: "personal/agent-bootstrap/pi",
-            title: "Pi Bootstrap Append",
-            path: "wiki/personal/agent-bootstrap/pi.md",
-            content: "Pi should load context before execution.",
-            score: 5,
-            source: "local",
-          },
-        ];
+        return [];
       },
       async get() {
         return null;
       },
       async loadAgentContext() {
-        return {
-          agentId: "gsd-executor",
-          source: "cli",
-          items: [
-            {
-              path: "wiki/agents/workers/gsd-executor/hot.md",
-              title: "Worker hot",
-              content: "Worker hot context.",
-              className: "hot",
-            },
-          ],
-        };
+        return null;
       },
       async closeAgentTask() {
         return { performed: false, reason: "disabled by default" };
@@ -91,6 +102,6 @@ describe("runHermesSupervisorTask memory integration", () => {
     expect(result.context_report.agent_context_loaded).toBe(true);
     expect(result.context_report.writeback_performed).toBe(false);
     expect(result.context_report.sources.some((source) => source.slug === "personal/agent-bootstrap/pi")).toBe(true);
-    expect(storedRequest.objective).toContain("advisory context only");
+    expect(storedRequest.objective).toContain("Advisory memory context from Agentic-KB");
   }, 15_000);
 });
