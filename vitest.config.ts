@@ -5,7 +5,6 @@ export default defineConfig({
       "tests/unit/**/*.test.ts",
       "tests/fuzz/**/*.test.ts",
       "tests/chaos/**/*.test.ts",
-      "tests/bench/**/*.test.ts",
     ],
     root: __dirname,
     dir: __dirname,

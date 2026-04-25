@@ -2,6 +2,15 @@
 
 All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 
+## [Unreleased]
+
+### Fixed
+- `npm run lint` now has a repo-local TypeScript ESLint config instead of failing with missing-config / unmatched-pattern errors.
+- `npm test` no longer runs the hash-chain microbench by default; the perf bench moved to opt-in `npm run bench`.
+
+### Changed
+- Hash-chain bench ceilings are now explicitly env-configurable via `PI_HASHCHAIN_BENCH_CEILING_MS`, with defaults widened to `12ms` local / `16ms` CI for slower storage/runner variance.
+
 ## [0.4.0] — 2026-04-18
 
 Maintenance + perf release. Toolchain aligned with `@mariozechner/pi-coding-agent` v0.67.68. 55 test files, 166 tests, tsc clean, zero audit findings.
