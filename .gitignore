@@ -10,3 +10,7 @@ dist/
 vitest.config.ts.timestamp-*.mjs
 
 .golden/
+
+# Personal context graph — real seed contains PII; never commit.
+context-graph/seed.json
+context-graph/seed.*.local.json
