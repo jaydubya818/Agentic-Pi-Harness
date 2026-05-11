@@ -1,0 +1,105 @@
+{
+  "_meta": {
+    "schema_version": "0.1",
+    "generated": "2026-05-11",
+    "instructions": "Copy this file to seed.json and replace placeholder values with real data. seed.json is gitignored — your real personal context never leaves your machine."
+  },
+  "career": [
+    {
+      "id": "career-placeholder-current",
+      "type": "career",
+      "role": "<role>",
+      "employer": "<employer>",
+      "start": "YYYY-MM",
+      "end": null,
+      "scope": "<one-sentence scope of current role>",
+      "highlights": [
+        "<highlight 1>",
+        "<highlight 2>"
+      ],
+      "confidence": "high",
+      "updated_at": "2026-05-11"
+    }
+  ],
+  "projects": [
+    {
+      "id": "project-placeholder-1",
+      "type": "projects",
+      "name": "<project name>",
+      "status": "active",
+      "role": "owner",
+      "started": "YYYY-MM",
+      "stage": "<stage e.g. alpha hardening | discovery | wind-down>",
+      "stack": ["<tech1>", "<tech2>"],
+      "north_star": "<the one outcome that defines success>",
+      "linked_career": "career-placeholder-current",
+      "confidence": "high",
+      "updated_at": "2026-05-11"
+    }
+  ],
+  "reading": [
+    {
+      "id": "reading-placeholder-1",
+      "type": "reading",
+      "title": "<book/paper/essay title>",
+      "author": "<author>",
+      "format": "book",
+      "started": "YYYY-MM",
+      "finished": null,
+      "themes": ["<theme1>"],
+      "tags": ["<tag1>"],
+      "links": [],
+      "confidence": "high",
+      "updated_at": "2026-05-11"
+    }
+  ],
+  "relationships": [
+    {
+      "id": "relationship-placeholder-1",
+      "type": "relationships",
+      "name": "<name>",
+      "role": "<spouse | parent | sibling | close-colleague | mentor>",
+      "shared_context": ["<context-area-1>"],
+      "decisions_to_loop_in": ["<decision-type-1>"],
+      "confidence": "high",
+      "updated_at": "2026-05-11"
+    }
+  ],
+  "therapy_themes": [
+    {
+      "id": "therapy_theme-placeholder-1",
+      "type": "therapy_themes",
+      "name": "<theme name e.g. 'Letting go of fixed identities'>",
+      "started": "YYYY-MM",
+      "active": true,
+      "linked_reading": [],
+      "confidence": "medium",
+      "updated_at": "2026-05-11"
+    }
+  ],
+  "meetings": [
+    {
+      "id": "meeting-placeholder-1",
+      "type": "meetings",
+      "name": "<meeting name>",
+      "cadence": "weekly",
+      "participants": [],
+      "purpose": "<purpose>",
+      "confidence": "high",
+      "updated_at": "2026-05-11"
+    }
+  ],
+  "founder_network": [
+    {
+      "id": "founder-placeholder-1",
+      "type": "founder_network",
+      "name": "<name>",
+      "company": "<company>",
+      "domain": ["<domain1>"],
+      "last_contact": "YYYY-MM-DD",
+      "notes_slug": "people/<slug>",
+      "confidence": "medium",
+      "updated_at": "2026-05-11"
+    }
+  ]
+}
