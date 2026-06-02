@@ -43,11 +43,11 @@ class PtyHermesTransport implements HermesTransport {
   }
 
   onOutput(listener: (chunk: string, stream: HermesTransportStream) => void): void {
-    this.ptyProcess.onData((chunk) => listener(chunk, "pty"));
+    this.ptyProcess.onData((chunk: string) => listener(chunk, "pty"));
   }
 
   onExit(listener: (event: HermesTransportExit) => void): void {
-    this.ptyProcess.onExit((event) => listener(event));
+    this.ptyProcess.onExit((event: HermesTransportExit) => listener(event));
   }
 
   kill(signal?: string): void {

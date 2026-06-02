@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
+import { readPiRuntimeConfig } from "../config/runtime.js";
+import { AgenticKbMemoryProvider, type AgenticKbAccessMode } from "../memory/index.js";
 import { detectHermes } from "../hermes/index.js";
 import { runHermesSupervisorTask } from "../orchestration/hermesSupervisor.js";
 
@@ -12,14 +14,24 @@ interface CliArgs {
   command?: string;
   bridgeUrl?: string;
   bridgeToken?: string;
+  bridgeTimeoutMs?: number;
+  useAgenticKb: boolean;
+  memoryQuery?: string;
+  agentId?: string;
+  kbPath?: string;
+  kbAccessMode?: AgenticKbAccessMode;
 }
 
 function parseArgs(argv: string[]): CliArgs {
+  const config = readPiRuntimeConfig(process.env);
   const args: CliArgs = {
     workdir: process.cwd(),
     outRoot: resolve(process.cwd(), ".pi-hermes-out"),
     objective: "Create a short markdown report in the artifact directory describing what Hermes did.",
     timeoutSeconds: 900,
+    bridgeUrl: config.bridgeUrl,
+    bridgeTimeoutMs: config.bridgeTimeoutMs,
+    useAgenticKb: false,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -49,6 +61,23 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (arg === "--bridge-token" && next) {
       args.bridgeToken = next;
       i += 1;
+    } else if (arg === "--bridge-timeout-ms" && next) {
+      args.bridgeTimeoutMs = Number(next);
+      i += 1;
+    } else if (arg === "--use-agentic-kb") {
+      args.useAgenticKb = true;
+    } else if (arg === "--memory-query" && next) {
+      args.memoryQuery = next;
+      i += 1;
+    } else if (arg === "--agent-id" && next) {
+      args.agentId = next;
+      i += 1;
+    } else if (arg === "--kb-path" && next) {
+      args.kbPath = resolve(next);
+      i += 1;
+    } else if (arg === "--kb-access-mode" && next && ["auto", "local", "http", "disabled"].includes(next)) {
+      args.kbAccessMode = next as AgenticKbAccessMode;
+      i += 1;
     }
   }
 
@@ -58,6 +87,19 @@ function parseArgs(argv: string[]): CliArgs {
 export async function runHermesRunCli(argv: string[] = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
   const detected = detectHermes();
+  const config = readPiRuntimeConfig(process.env);
+  const memoryProvider = args.useAgenticKb
+    ? new AgenticKbMemoryProvider({
+        kbRoot: args.kbPath ?? config.agenticKbPath,
+        apiUrl: config.kbApiUrl,
+        accessMode: args.kbAccessMode ?? config.agenticKbAccessMode,
+        maxResults: config.agenticKbMaxResults,
+        contextBudgetChars: config.agenticKbContextBudgetChars,
+        privatePin: config.privatePin,
+        anthropicApiKey: config.anthropicApiKey,
+      })
+    : undefined;
+
   const result = await runHermesSupervisorTask({
     objective: args.objective,
     workdir: args.workdir,
@@ -66,7 +108,12 @@ export async function runHermesRunCli(argv: string[] = process.argv.slice(2)): P
     profile: args.profile,
     bridgeUrl: args.bridgeUrl,
     bridgeToken: args.bridgeToken,
+    bridgeTimeoutMs: args.bridgeTimeoutMs,
     adapterOptions: { command: args.command ?? detected.binaryPath ?? undefined },
+    useAgenticKbMemory: args.useAgenticKb,
+    memoryProvider,
+    memoryQuery: args.memoryQuery,
+    memoryAgentId: args.agentId,
   });
   console.log(JSON.stringify({
     hermes_binary_path: args.command ?? detected.binaryPath ?? null,

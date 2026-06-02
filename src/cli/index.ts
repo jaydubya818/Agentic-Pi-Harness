@@ -8,6 +8,7 @@ import { runHermesDoctorCli } from "./hermes-doctor.js";
 import { runHermesRunCli } from "./hermes-run.js";
 import { runHermesSmoke } from "./hermes-smoke.js";
 import { inspectPolicy } from "./inspect.js";
+import { runMemoryCli } from "./memory.js";
 import { replayTape } from "./replay.js";
 import { parseRunCliArgs, runGoldenPath } from "./run.js";
 import { verifyTape } from "./verify.js";
@@ -62,6 +63,10 @@ async function main() {
       }
       process.exit(checks.every((check) => check.ok) ? 0 : 1);
     }
+    case "memory": {
+      await runMemoryCli(rest);
+      return;
+    }
     case "run": {
       const parsed = await parseRunCliArgs(rest);
       const id = await runGoldenPath(parsed.workdir, parsed.outRoot, { tracePath: parsed.tracePath });
@@ -94,7 +99,7 @@ async function main() {
       process.exit(await replayTape(tapePath));
     }
     default:
-      console.error("usage: pi-harness <doctor|run|verify|what-changed|inspect|replay|hermes-demo|hermes-smoke|hermes-run|hermes-bridge|hermes-doctor|acceptance-hermes|acceptance-pi> [args]");
+      console.error("usage: pi-harness <doctor|run|verify|what-changed|inspect|replay|hermes-demo|hermes-smoke|hermes-run|hermes-bridge|hermes-doctor|acceptance-hermes|acceptance-pi|memory> [args]");
       process.exit(2);
   }
 }

@@ -316,7 +316,10 @@ pi-harness inspect <policy.jsonl>
 pi-harness replay <tape.jsonl>
 pi-harness hermes-demo [--workdir <path>] [--output-dir <path>] [--objective <text>]
 pi-harness hermes-smoke [--workdir <path>] [--output-dir <path>]
-pi-harness hermes-run [--workdir <path>] [--out-root <path>] [--objective <text>]
+pi-harness hermes-run [--workdir <path>] [--out-root <path>] [--objective <text>] [--bridge-timeout-ms <ms>] [--use-agentic-kb] [--memory-query <text>] [--agent-id <id>] [--kb-path <path>] [--kb-access-mode <auto|local|http|disabled>]
+pi-harness memory search <query> [--kb-path <path>] [--access-mode <auto|local|http|disabled>]
+pi-harness memory read <slug> [--kb-path <path>] [--access-mode <auto|local|http|disabled>]
+pi-harness memory context <agent-id> [--project <name>] [--kb-path <path>] [--access-mode <auto|local|http|disabled>]
 pi-harness hermes-bridge [--host <host>] [--port <port>] [--auth-token <token>] [--state-root <path>]
 pi-harness hermes-doctor [--url <url>] [--token-file <path>] [--workdir <path>]
 pi-harness acceptance-hermes [--url <url>] [--token-file <path>] [--workdir <path>]
@@ -353,6 +356,36 @@ Higher-level Pi orchestration path:
 ```bash
 npm run hermes:run -- --workdir "$PWD" --out-root "$PWD/.pi-hermes-out"
 ```
+
+Hermes run can also attach bounded advisory Agentic-KB memory:
+
+```bash
+npm run hermes:run -- \
+  --workdir "$PWD" \
+  --out-root "$PWD/.pi-hermes-out" \
+  --use-agentic-kb \
+  --memory-query "Hermes bridge health checks" \
+  --agent-id gsd-executor
+```
+
+Related env vars:
+
+```bash
+export PI_HERMES_BRIDGE_URL=http://127.0.0.1:8787
+export PI_HERMES_BRIDGE_TOKEN=replace-me
+export PI_HERMES_BRIDGE_TIMEOUT_MS=30000
+export PI_AGENTIC_KB_PATH=/path/to/Agentic-KB
+export PI_AGENTIC_KB_ACCESS_MODE=auto
+export PI_AGENTIC_KB_MAX_RESULTS=5
+export PI_AGENTIC_KB_CONTEXT_BUDGET_CHARS=6000
+export KB_API_URL=http://localhost:3002
+export PRIVATE_PIN=optional-private-pin
+```
+
+Notes:
+- Agentic-KB access is read-only by default in this integration.
+- Memory is advisory only and never overrides system, operator, policy, or safety rules.
+- If Agentic-KB is unavailable, Hermes execution continues without memory context.
 
 Local HTTP bridge:
 
