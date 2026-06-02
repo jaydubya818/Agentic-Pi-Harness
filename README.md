@@ -360,6 +360,12 @@ Local HTTP bridge:
 npm run hermes:bridge -- --host 127.0.0.1 --port 8787 --auth-token "$PI_HERMES_BRIDGE_TOKEN"
 ```
 
+Persistent macOS LaunchAgent setup:
+
+```bash
+scripts/setup-hermes-bridge-launchagent.sh --load
+```
+
 Bridge state persists by default under:
 
 ```bash
@@ -373,6 +379,8 @@ Hermes doctor:
 ```bash
 npm run hermes:doctor -- --url http://127.0.0.1:8787
 ```
+
+See [`docs/HERMES-BRIDGE-LAUNCHAGENT.md`](docs/HERMES-BRIDGE-LAUNCHAGENT.md) for the persistent bridge setup.
 
 Hermes acceptance helper (self-contained by default — it starts a temporary local bridge and token automatically):
 

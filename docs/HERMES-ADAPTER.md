@@ -257,6 +257,24 @@ Hermes doctor:
 npm run hermes:doctor -- --url http://127.0.0.1:8787
 ```
 
+## Persistent macOS bridge setup
+
+To keep the bridge online across shells and restarts, install the LaunchAgent helper:
+
+```bash
+scripts/setup-hermes-bridge-launchagent.sh --load
+```
+
+This writes the token, wrapper script, and LaunchAgent plist into `~/.pi/` and `~/Library/LaunchAgents/`.
+
+Dry run:
+
+```bash
+scripts/setup-hermes-bridge-launchagent.sh --dry-run
+```
+
+For the full control/verification flow, see [`docs/HERMES-BRIDGE-LAUNCHAGENT.md`](./HERMES-BRIDGE-LAUNCHAGENT.md).
+
 It validates:
 - bridge reachability
 - auth enforcement
