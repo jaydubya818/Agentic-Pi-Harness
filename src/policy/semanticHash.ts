@@ -67,5 +67,10 @@ export function semanticDrift(
     const hb = hashB.get(id);
     if (hb !== ha) drifted.push(id);
   }
+  // Calls present only in the second log also diverge; the first loop
+  // only sees ids from `a`, so collect b-only ids explicitly.
+  for (const id of hashB.keys()) {
+    if (!hashA.has(id)) drifted.push(id);
+  }
   return drifted;
 }
