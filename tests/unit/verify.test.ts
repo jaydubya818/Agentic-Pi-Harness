@@ -35,6 +35,26 @@ describe("replay tape verify", () => {
     expect(entries.filter((entry) => entry.endsWith(".tmp"))).toEqual([]);
   });
 
+  it("rejects an empty tape and a tape that does not start with a header", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-"));
+    const empty = join(dir, "empty.jsonl");
+    await writeFile(empty, "");
+    const emptyRes = await verifyTape(empty);
+    expect(emptyRes.ok).toBe(false);
+    expect(emptyRes.error).toMatch(/empty tape/);
+
+    const headerless = join(dir, "headerless.jsonl");
+    const seeded = join(dir, "seed.jsonl");
+    const r = new ReplayRecorder(seeded);
+    await r.writeHeader({ sessionId: "s1", loopGitSha: "abc", policyDigest: "sha256:xx", costTableVersion: "v1" });
+    await r.writeEvent({ type: "text_delta", schemaVersion: 1, text: "hi" });
+    const lines = (await readFile(seeded, "utf8")).split("\n").filter(Boolean);
+    await writeFile(headerless, lines[1] + "\n");
+    const headerlessRes = await verifyTape(headerless);
+    expect(headerlessRes.ok).toBe(false);
+    expect(headerlessRes.error).toMatch(/expected header/);
+  });
+
   it("detects tampering", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-"));
     const tape = join(dir, "t.jsonl");
