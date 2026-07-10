@@ -109,6 +109,12 @@ export async function readTape(path: string): Promise<TapeRecord[]> {
 export async function verifyTape(path: string): Promise<VerifyResult> {
   try {
     const records = await readTape(path);
+    if (records.length === 0) {
+      return { ok: false, records: 0, error: "empty tape (missing header)" };
+    }
+    if (records[0].type !== "header") {
+      return { ok: false, records: 0, error: "line 1: expected header record" };
+    }
     let prevHash = ZERO;
     let lastDigest = prevHash;
 
