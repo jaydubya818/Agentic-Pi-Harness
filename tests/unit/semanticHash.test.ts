@@ -62,4 +62,16 @@ describe("semantic decision hash", () => {
     ];
     expect(semanticDrift(runA, runB)).toEqual(["2"]);
   });
+
+  it("semanticDrift reports ids present in only one log", () => {
+    const runA = [
+      { decision: decision("1", "deny", "a"), toolName: "read_file", input: { path: "/etc/p" } },
+    ];
+    const runB = [
+      { decision: decision("1", "deny", "a"), toolName: "read_file", input: { path: "/etc/p" } },
+      { decision: decision("2", "approve", "b"), toolName: "write_file", input: { path: "./x" } },
+    ];
+    expect(semanticDrift(runA, runB)).toEqual(["2"]);
+    expect(semanticDrift(runB, runA)).toEqual(["2"]);
+  });
 });
