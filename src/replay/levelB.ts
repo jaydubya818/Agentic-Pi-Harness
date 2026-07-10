@@ -19,9 +19,15 @@ export interface EffectDrift {
 
 async function loadEffects(path: string): Promise<EffectRecord[]> {
   const raw = await readFile(path, "utf8");
-  return raw.split("\n").filter(Boolean).map((l) => {
-    const r = EffectRecordSchema.safeParse(JSON.parse(l));
-    if (!r.success) throw new PiHarnessError("E_SCHEMA_PARSE", "effect log invalid", { issues: r.error.issues });
+  return raw.split("\n").filter(Boolean).map((l, index) => {
+    let json: unknown;
+    try {
+      json = JSON.parse(l);
+    } catch (error) {
+      throw new PiHarnessError("E_SCHEMA_PARSE", "effect log is not valid JSONL", { path, line: index + 1, cause: String(error) });
+    }
+    const r = EffectRecordSchema.safeParse(json);
+    if (!r.success) throw new PiHarnessError("E_SCHEMA_PARSE", "effect log invalid", { path, line: index + 1, issues: r.error.issues });
     return r.data;
   });
 }

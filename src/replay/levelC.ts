@@ -28,9 +28,16 @@ function hookSummary(decision: PolicyDecision): string | null {
 async function load(path: string): Promise<Map<string, PolicyDecision>> {
   const raw = await readFile(path, "utf8");
   const m = new Map<string, PolicyDecision>();
-  for (const line of raw.split("\n").filter(Boolean)) {
-    const r = PolicyDecisionSchema.safeParse(JSON.parse(line));
-    if (!r.success) throw new PiHarnessError("E_SCHEMA_PARSE", "policy log invalid", { issues: r.error.issues });
+  const lines = raw.split("\n").filter(Boolean);
+  for (let index = 0; index < lines.length; index++) {
+    let json: unknown;
+    try {
+      json = JSON.parse(lines[index]);
+    } catch (error) {
+      throw new PiHarnessError("E_SCHEMA_PARSE", "policy log is not valid JSONL", { path, line: index + 1, cause: String(error) });
+    }
+    const r = PolicyDecisionSchema.safeParse(json);
+    if (!r.success) throw new PiHarnessError("E_SCHEMA_PARSE", "policy log invalid", { path, line: index + 1, issues: r.error.issues });
     m.set(r.data.toolCallId, r.data);
   }
   return m;
