@@ -71,7 +71,11 @@ export function evaluateWorkerToolUse(input: {
     }
 
     if (input.workerControls.allowedWritePathPrefixes?.length) {
-      const allowed = paths.every((path) => input.workerControls!.allowedWritePathPrefixes!.some((prefix) => path.startsWith(prefix)));
+      // Fail closed: a write whose input yields no extractable paths would
+      // otherwise pass vacuously (`[].every(...)` is true) and bypass the
+      // prefix restriction entirely.
+      const allowed = paths.length > 0
+        && paths.every((path) => input.workerControls!.allowedWritePathPrefixes!.some((prefix) => path.startsWith(prefix)));
       if (!allowed) {
         return {
           allowed: false,

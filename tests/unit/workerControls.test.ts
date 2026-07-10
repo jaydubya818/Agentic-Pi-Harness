@@ -42,6 +42,14 @@ describe("worker controls", () => {
 
     expect(evaluateWorkerToolUse({
       mode: "worker",
+      workerControls: { signedPolicy: true, allowedWritePathPrefixes: ["sandbox/"] },
+      toolName: "write_file",
+      toolClass: "serial",
+      toolInput: { file: "sandbox/a.txt" },
+    })).toMatchObject({ allowed: false, manifestInfluence: { field: "workerControl", value: "writePathPrefix" } });
+
+    expect(evaluateWorkerToolUse({
+      mode: "worker",
       workerControls: { signedPolicy: true, allowExclusiveTools: false },
       toolName: "bash",
       toolClass: "exclusive",
