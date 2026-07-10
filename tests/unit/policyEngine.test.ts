@@ -92,4 +92,11 @@ describe("signed policy", () => {
     await writeFile(p, JSON.stringify(tampered));
     await expect(loadPolicy(p, { key, strict: true })).rejects.toThrow(/signature/);
   });
+
+  it("wraps malformed policy JSON in a schema-parse harness error", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-sig3-"));
+    const p = join(dir, "policy.json");
+    await writeFile(p, "{ not json");
+    await expect(loadPolicy(p, { strict: false })).rejects.toThrow(/not valid JSON/);
+  });
 });
