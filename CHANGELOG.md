@@ -5,6 +5,12 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 ## [Unreleased]
 
 ### Fixed
+- `semanticDrift` now reports tool calls present in only one of the two decision logs instead of silently ignoring calls that appear only in the replayed log.
+- Worker-mode `allowedWritePathPrefixes` now fails closed when a write input yields no extractable paths (previously the vacuous `every()` allowed the write through).
+- `loadPolicy` wraps malformed policy JSON in `E_SCHEMA_PARSE` (was a raw `SyntaxError`) and verifies HMAC signatures with a timing-safe comparison.
+- Level-B/Level-C log loaders wrap malformed JSONL lines in `E_SCHEMA_PARSE` with file path and line number.
+- `verifyTape` rejects empty tapes and tapes that do not start with a header record.
+- `pi-harness replay` parses the tape once instead of twice (new `verifyTapeRecords` helper).
 - `npm run lint` now has a repo-local TypeScript ESLint config instead of failing with missing-config / unmatched-pattern errors.
 - `npm test` no longer runs the hash-chain microbench by default; the perf bench moved to opt-in `npm run bench`.
 
