@@ -106,28 +106,32 @@ export async function readTape(path: string): Promise<TapeRecord[]> {
   return records;
 }
 
+/** Verify an already-parsed tape's hash chain (see verifyTape). */
+export function verifyTapeRecords(records: TapeRecord[]): VerifyResult {
+  if (records.length === 0) {
+    return { ok: false, records: 0, error: "empty tape (missing header)" };
+  }
+  if (records[0].type !== "header") {
+    return { ok: false, records: 0, error: "line 1: expected header record" };
+  }
+  let prevHash = ZERO;
+  let lastDigest = prevHash;
+
+  for (let i = 0; i < records.length; i++) {
+    const result = verifyRecordChain(records[i], prevHash, i + 1);
+    if (!result.ok) {
+      return { ok: false, records: i, error: result.error };
+    }
+    prevHash = result.digest;
+    lastDigest = result.digest;
+  }
+
+  return { ok: true, records: records.length, digest: lastDigest };
+}
+
 export async function verifyTape(path: string): Promise<VerifyResult> {
   try {
-    const records = await readTape(path);
-    if (records.length === 0) {
-      return { ok: false, records: 0, error: "empty tape (missing header)" };
-    }
-    if (records[0].type !== "header") {
-      return { ok: false, records: 0, error: "line 1: expected header record" };
-    }
-    let prevHash = ZERO;
-    let lastDigest = prevHash;
-
-    for (let i = 0; i < records.length; i++) {
-      const result = verifyRecordChain(records[i], prevHash, i + 1);
-      if (!result.ok) {
-        return { ok: false, records: i, error: result.error };
-      }
-      prevHash = result.digest;
-      lastDigest = result.digest;
-    }
-
-    return { ok: true, records: records.length, digest: lastDigest };
+    return verifyTapeRecords(await readTape(path));
   } catch (error) {
     if (error instanceof PiHarnessError) {
       return { ok: false, records: 0, error: error.message };

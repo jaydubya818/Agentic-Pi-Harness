@@ -1,4 +1,5 @@
-import { readTape, verifyTape } from "../replay/recorder.js";
+import { readTape, verifyTapeRecords } from "../replay/recorder.js";
+import { PiHarnessError } from "../errors.js";
 import { TapeRecord } from "../schemas/index.js";
 
 function renderRecord(record: TapeRecord, index: number): string {
@@ -27,13 +28,20 @@ function renderRecord(record: TapeRecord, index: number): string {
  * doubles as a CI guard.
  */
 export async function replayTape(path: string): Promise<number> {
-  const verification = await verifyTape(path);
+  let records;
+  try {
+    records = await readTape(path);
+  } catch (error) {
+    console.error(`FAIL: ${error instanceof PiHarnessError ? error.message : String(error)}`);
+    return 1;
+  }
+
+  const verification = verifyTapeRecords(records);
   if (!verification.ok) {
     console.error(`FAIL: ${verification.error}`);
     return 1;
   }
 
-  const records = await readTape(path);
   records.forEach((record, index) => {
     console.log(renderRecord(record, index));
   });
