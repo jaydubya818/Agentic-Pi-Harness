@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { PolicyDoc, PolicyDocSchema } from "./engine.js";
 import { framedCanonical, hmacSha256Hex, sha256Hex } from "../schemas/canonical.js";
@@ -19,7 +20,13 @@ export interface LoadedPolicy {
  */
 export async function loadPolicy(path: string, opts: { key?: Buffer; strict: boolean }): Promise<LoadedPolicy> {
   const raw = await readFile(path, "utf8");
-  const parsed = PolicyDocSchema.safeParse(JSON.parse(raw));
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch (error) {
+    throw new PiHarnessError("E_SCHEMA_PARSE", "policy file is not valid JSON", { path, cause: String(error) });
+  }
+  const parsed = PolicyDocSchema.safeParse(json);
   if (!parsed.success) throw new PiHarnessError("E_SCHEMA_PARSE", "policy schema invalid", { issues: parsed.error.issues });
   const doc = parsed.data;
   const framed = framedCanonical("pi-policy-v1", doc);
@@ -38,8 +45,9 @@ export async function loadPolicy(path: string, opts: { key?: Buffer; strict: boo
     if (opts.strict) throw new PiHarnessError("E_POLICY_SIG", "malformed signature file");
     return { doc, digest, signed: false };
   }
-  const expected = hmacSha256Hex(opts.key, framed);
-  if (expected !== m[1]) {
+  const expected = Buffer.from(hmacSha256Hex(opts.key, framed), "hex");
+  const actual = Buffer.from(m[1], "hex");
+  if (!timingSafeEqual(expected, actual)) {
     if (opts.strict) throw new PiHarnessError("E_POLICY_SIG", "signature mismatch");
     return { doc, digest, signed: false };
   }
