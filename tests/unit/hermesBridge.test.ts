@@ -105,6 +105,46 @@ describe("HermesBridgeServer", () => {
     }
   }, 15000);
 
+  it("rejects malformed and oversized JSON bodies without a 500", async () => {
+    const stateRoot = await makeTempDir("pi-hermes-bridge-badbody-state-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    try {
+      const malformed = await fetch(`${base}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{not json",
+      });
+      expect(malformed.status).toBe(400);
+      const malformedBody = await malformed.json() as { error: string };
+      expect(malformedBody.error).toMatch(/invalid JSON body/);
+
+      const oversized = await fetch(`${base}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: `{"pad":"${"x".repeat(4 * 1024 * 1024 + 16)}"}`,
+      });
+      expect(oversized.status).toBe(413);
+    } finally {
+      await server.stop();
+    }
+  }, 15000);
+
   it("starts sessions and executes Hermes runs over HTTP", async () => {
     const workdir = await makeTempDir("pi-hermes-bridge-work-");
     const outputDir = await makeTempDir("pi-hermes-bridge-out-");
