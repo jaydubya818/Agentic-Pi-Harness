@@ -137,6 +137,28 @@ describe("KB access policy V1", () => {
     expect(await readFile(tombstonePath, "utf8")).toContain("# Tombstone");
   });
 
+  it("refuses to promote over an existing canonical target", async () => {
+    const roots = await createRoots();
+    const sourcePath = join(roots.llmWikiRoot, "drafts", "candidate.md");
+    await writeKnowledgeText({ actor: "hermes", path: sourcePath, roots, content: "# Working Note\n\nUseful result.\n" });
+
+    const targetPath = join(roots.agenticKbRoot, "knowledge", "promoted", "useful-result.md");
+    const approvalPath = join(roots.agenticKbRoot, "supervision", "approvals", "approve-useful-result.md");
+    const promote = () => promoteKnowledgeCandidate({
+      sourcePath,
+      targetPath,
+      approvalPath,
+      missionId: "mission-alpha",
+      runId: "run-1",
+      roots,
+    });
+
+    await promote();
+    const canonical = await readFile(targetPath, "utf8");
+    await expect(promote()).rejects.toThrow(/promotion target already exists/);
+    expect(await readFile(targetPath, "utf8")).toBe(canonical);
+  });
+
   it("lets Pi promote reviewed knowledge into canonical KB with approval lineage", async () => {
     const roots = await createRoots();
     const sourcePath = join(roots.llmWikiRoot, "drafts", "candidate.md");

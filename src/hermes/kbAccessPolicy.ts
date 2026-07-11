@@ -345,6 +345,12 @@ export async function promoteKnowledgeCandidate(input: PromoteKnowledgeCandidate
   const sourcePath = resolve(input.sourcePath);
   const targetPath = resolve(input.targetPath);
   const approvalPath = resolve(input.approvalPath);
+  if (await fileExists(targetPath)) {
+    throw new Error(`promotion target already exists; tombstone or retire it first: ${targetPath}`);
+  }
+  if (await fileExists(approvalPath)) {
+    throw new Error(`promotion approval record already exists: ${approvalPath}`);
+  }
   const sourceContent = await readFile(sourcePath, "utf8");
   const promotedBy = input.promotedBy ?? "pi";
   const createdBy = input.createdBy ?? inferCreatedBy(sourceContent) ?? "pi";
