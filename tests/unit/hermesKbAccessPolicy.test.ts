@@ -49,6 +49,22 @@ describe("KB access policy V1", () => {
     await expect(writeKnowledgeText({ actor: "hermes", path: target, roots, content: validFrontmatter("mission-alpha", "run-1") + "# Updated\n" })).rejects.toThrow(/create-only/);
   });
 
+  it("emits kb.queue_create for JSON queue creates", async () => {
+    const roots = await createRoots();
+    const target = join(roots.agenticKbRoot, "queues", "discovery", "candidate.json");
+    const events: string[] = [];
+
+    await writeKnowledgeJson({
+      actor: "hermes",
+      path: target,
+      roots,
+      value: { candidate: true },
+      onEvent: (event) => { events.push(event.type); },
+    });
+
+    expect(events).toEqual(["kb.queue_create"]);
+  });
+
   it("blocks Hermes writes into canonical KB paths", async () => {
     const roots = await createRoots();
     const target = join(roots.agenticKbRoot, "knowledge", "promoted", "forbidden.md");
