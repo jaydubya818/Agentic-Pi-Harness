@@ -1,5 +1,6 @@
 import { mkdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { join, resolve } from "node:path";
@@ -156,7 +157,11 @@ export class HermesBridgeServer {
   private isAuthorized(req: IncomingMessage): boolean {
     if (!this.authToken) return true;
     const header = req.headers.authorization;
-    return header === `Bearer ${this.authToken}`;
+    if (typeof header !== "string") return false;
+    const expected = Buffer.from(`Bearer ${this.authToken}`, "utf8");
+    const actual = Buffer.from(header, "utf8");
+    if (expected.length !== actual.length) return false;
+    return timingSafeEqual(expected, actual);
   }
 
   private async handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
