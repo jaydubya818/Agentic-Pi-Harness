@@ -120,6 +120,11 @@ export class HermesBridgeServer {
 
     this.server = createServer((req, res) => {
       void this.handle(req, res).catch((error) => {
+        if (error instanceof BridgeRequestError) {
+          this.logger.log("warn", "hermes.bridge.bad_request", { error: error.message });
+          json(res, error.statusCode, { error: error.message });
+          return;
+        }
         this.logger.log("error", "hermes.bridge.unhandled", { error: String(error) });
         json(res, 500, { error: error instanceof Error ? error.message : String(error) });
       });
@@ -1057,13 +1062,32 @@ function writeSseNamedEvent(res: ServerResponse, name: string, data: string, id?
   res.write("\n");
 }
 
+const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
+
+class BridgeRequestError extends Error {
+  constructor(readonly statusCode: number, message: string) {
+    super(message);
+    this.name = "BridgeRequestError";
+  }
+}
+
 async function readJson<T = unknown>(req: IncomingMessage): Promise<T> {
   const chunks: Buffer[] = [];
+  let total = 0;
   for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buf.length;
+    if (total > MAX_REQUEST_BODY_BYTES) {
+      throw new BridgeRequestError(413, `request body exceeds ${MAX_REQUEST_BODY_BYTES} bytes`);
+    }
+    chunks.push(buf);
   }
-  if (chunks.length === 0) return {} as T;
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+  if (total === 0) return {} as T;
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
+  } catch (error) {
+    throw new BridgeRequestError(400, `invalid JSON body: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 function json(res: ServerResponse, statusCode: number, value: unknown): void {
