@@ -403,6 +403,15 @@ export async function deleteKnowledgePath(input: DeleteKnowledgePathInput): Prom
   const info = classifyKnowledgePath(path, input.roots);
 
   if (input.actor === "hermes") {
+    if (!info.inAgenticKb && !info.inLlmWiki) {
+      await emitPolicyEvent(input.onEvent, info, {
+        type: "kb.delete_denied",
+        actor: input.actor,
+        path,
+        detail: "Hermes cannot delete outside approved knowledge roots",
+      });
+      throw new Error(`Hermes delete denied outside approved knowledge roots: ${path}`);
+    }
     if (info.inAgenticKb) {
       await emitPolicyEvent(input.onEvent, info, {
         type: "kb.delete_denied",
