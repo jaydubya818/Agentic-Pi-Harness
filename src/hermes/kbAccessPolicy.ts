@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 
@@ -530,8 +530,7 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 async function writeAppend(path: string, content: string): Promise<void> {
-  const existing = await fileExists(path) ? await readFile(path, "utf8") : "";
-  await writeFile(path, existing + ensureTrailingNewline(content), "utf8");
+  await appendFile(path, ensureTrailingNewline(content), "utf8");
 }
 
 function ensureTrailingNewline(content: string): string {
