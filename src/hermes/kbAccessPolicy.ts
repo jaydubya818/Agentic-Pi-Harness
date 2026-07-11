@@ -333,7 +333,7 @@ export async function writeKnowledgeJson(input: WriteKnowledgeJsonInput): Promis
   if (mode === "append") await writeAppend(path, content);
   else await writeFile(path, content, "utf8");
   await emitPolicyEvent(input.onEvent, info, {
-    type: "kb.write_allowed",
+    type: info.pathClass === "kb_discovery" || info.pathClass === "kb_handoff_inbound" ? "kb.queue_create" : "kb.write_allowed",
     actor: input.actor,
     path,
     mode,
