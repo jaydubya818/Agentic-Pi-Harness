@@ -5,6 +5,12 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 ## [Unreleased]
 
 ### Fixed
+- Hermes deletes outside both knowledge roots are now denied (previously fell through every guard to an unconditional `unlink`).
+- Append-mode knowledge writes use a true `O_APPEND` append instead of read-whole-file + truncate-and-rewrite, so a crash mid-append can no longer lose an entire trace.
+- `promoteKnowledgeCandidate` fails fast if the canonical target or approval record already exists instead of silently overwriting promoted knowledge.
+- `writeKnowledgeJson` emits `kb.queue_create` for queue creates, matching `writeKnowledgeText` in the policy audit stream.
+- Bridge bearer-token auth uses `crypto.timingSafeEqual`; request bodies are capped at 4MB (413) and malformed JSON returns 400 instead of a logged-as-unhandled 500.
+- `requestApprovalDecision` clears its timeout timer, aborts the requester's `AbortSignal` on timeout, and no longer misclassifies a human deny whose reason is literally "approval timeout" as a system timeout.
 - `semanticDrift` now reports tool calls present in only one of the two decision logs instead of silently ignoring calls that appear only in the replayed log.
 - Worker-mode `allowedWritePathPrefixes` now fails closed when a write input yields no extractable paths (previously the vacuous `every()` allowed the write through).
 - `loadPolicy` wraps malformed policy JSON in `E_SCHEMA_PARSE` (was a raw `SyntaxError`) and verifies HMAC signatures with a timing-safe comparison.
