@@ -95,6 +95,42 @@ describe("approval runtime", () => {
     });
   });
 
+  it("aborts the requester when the approval times out", async () => {
+    const packet = createApprovalPacket({ sessionId: "s1", decision: askDecision(), toolName: "write_file", timeoutMs: 10, requestedAt: "2026-04-10T00:00:01Z" });
+    let observedSignal: AbortSignal | null = null;
+
+    const decision = await requestApprovalDecision({
+      packet,
+      requester: {
+        request: (_packet, signal) => {
+          observedSignal = signal;
+          return new Promise(() => undefined);
+        },
+      },
+      timeoutMs: 10,
+      decidedAt: () => "2026-04-10T00:00:05Z",
+    });
+
+    expect(decision.outcome).toBe("timeout");
+    expect(decision.actor).toBe("system");
+    expect(decision.reason).toBe("approval timeout");
+    expect(observedSignal!.aborted).toBe(true);
+  });
+
+  it("keeps a human deny as deny even when its reason says approval timeout", async () => {
+    const packet = createApprovalPacket({ sessionId: "s1", decision: askDecision(), toolName: "write_file", timeoutMs: 1000, requestedAt: "2026-04-10T00:00:01Z" });
+
+    const decision = await requestApprovalDecision({
+      packet,
+      requester: { request: async () => ({ outcome: "deny", actor: "human", reason: "approval timeout" }) },
+      timeoutMs: 1000,
+      decidedAt: () => "2026-04-10T00:00:06Z",
+    });
+
+    expect(decision.outcome).toBe("deny");
+    expect(decision.actor).toBe("human");
+  });
+
   it("mediates ask decisions into final approve/deny outcomes", () => {
     const approved = applyApprovalDecision(askDecision(), {
       packetId: "t1:approval",

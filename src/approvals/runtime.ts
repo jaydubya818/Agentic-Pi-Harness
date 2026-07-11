@@ -78,19 +78,24 @@ export async function requestApprovalDecision(input: {
   const abortController = new AbortController();
   const onAbort = () => abortController.abort();
   input.signal?.addEventListener("abort", onAbort, { once: true });
+  const timedOut = Symbol("approval-timeout");
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
-    const response = await Promise.race([
+    const raced = await Promise.race([
       input.requester.request(input.packet, abortController.signal),
-      new Promise<ApprovalResponse>((resolve) => setTimeout(() => resolve({ outcome: "deny", actor: "system", reason: "approval timeout" }), input.timeoutMs)),
+      new Promise<typeof timedOut>((resolve) => {
+        timeoutHandle = setTimeout(() => resolve(timedOut), input.timeoutMs);
+      }),
     ]);
 
-    if (response.outcome === "deny" && response.reason === "approval timeout") {
+    if (raced === timedOut) {
+      abortController.abort();
       return {
         packetId: input.packet.packetId,
         toolCallId: input.packet.toolCallId,
         outcome: "timeout",
-        actor: response.actor ?? "system",
-        reason: response.reason,
+        actor: "system",
+        reason: "approval timeout",
         decidedAt: decidedAt(),
       };
     }
@@ -98,12 +103,13 @@ export async function requestApprovalDecision(input: {
     return {
       packetId: input.packet.packetId,
       toolCallId: input.packet.toolCallId,
-      outcome: response.outcome,
-      actor: response.actor ?? "human",
-      reason: response.reason,
+      outcome: raced.outcome,
+      actor: raced.actor ?? "human",
+      reason: raced.reason,
       decidedAt: decidedAt(),
     };
   } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
     input.signal?.removeEventListener("abort", onAbort);
   }
 }
