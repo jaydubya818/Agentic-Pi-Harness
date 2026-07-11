@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -97,6 +97,16 @@ describe("KB access policy V1", () => {
     const text = await readFile(tracePath, "utf8");
     expect(text).toContain('"started"');
     expect(text).toContain('"completed"');
+  });
+
+  it("denies Hermes deletes outside approved knowledge roots", async () => {
+    const roots = await createRoots();
+    const outsideDir = await makeTempDir("kb-outside-");
+    const target = join(outsideDir, "victim.txt");
+    await writeFile(target, "do not touch\n", "utf8");
+
+    await expect(deleteKnowledgePath({ actor: "hermes", path: target, roots })).rejects.toThrow(/outside approved knowledge roots/);
+    await expect(access(target)).resolves.toBeUndefined();
   });
 
   it("denies Hermes deletes in Agentic-KB and allows Pi tombstones", async () => {
