@@ -94,10 +94,18 @@ export function sanitizeToolOutput(raw: string, opts: Pick<WrapOptions, "toolCal
   };
 }
 
+function escapeAttribute(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 export function wrapToolOutput(raw: string, opts: WrapOptions): WrapResult {
   const { text, sanitization } = sanitizeToolOutput(raw, opts);
   const wrapped =
-    `<tool_output trusted="false" tool="${opts.toolName}" id="${opts.toolCallId}">\n` +
+    `<tool_output trusted="false" tool="${escapeAttribute(opts.toolName)}" id="${escapeAttribute(opts.toolCallId)}">\n` +
     text +
     `\n</tool_output>`;
 
