@@ -480,7 +480,6 @@ export class HermesBridgeServer {
 
   private startHeartbeat(run: HermesBridgeRunRecord): ActiveHeartbeatController {
     let stopped = false;
-    let lastSemanticHeartbeatAt = Date.now();
     (run as HermesBridgeRunRecord & { __lastProgressAt?: number }).__lastProgressAt = Date.now();
 
     const heartbeatTick = setInterval(() => {
@@ -488,7 +487,6 @@ export class HermesBridgeServer {
         if (stopped || !run.v2Task) return;
         if (run.state !== "running" && run.state !== "starting") return;
         if (this.emitSemanticHeartbeats) {
-          lastSemanticHeartbeatAt = Date.now();
           await this.emitV2Event(run, {
             event_type: "task.heartbeat",
             state: run.state as PiHermesRunState,
@@ -509,7 +507,8 @@ export class HermesBridgeServer {
       void (async () => {
         if (stopped || !run.v2Task) return;
         if (run.state !== "running" && run.state !== "starting") return;
-        if (Date.now() - lastSemanticHeartbeatAt < this.stuckTimeoutMs) return;
+        const lastProgressAt = (run as HermesBridgeRunRecord & { __lastProgressAt?: number }).__lastProgressAt ?? 0;
+        if (Date.now() - lastProgressAt < this.stuckTimeoutMs) return;
         stopped = true;
         await this.adapter.cancel(run.session.session_id);
         await this.failV2Run(run, "failed", "stuck_run", "semantic heartbeat missing beyond supervisor threshold");

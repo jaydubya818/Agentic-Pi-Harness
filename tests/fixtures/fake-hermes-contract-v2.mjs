@@ -15,6 +15,7 @@ const markers = {
   missingArtifact: query.includes("__MISSING_ARTIFACT__"),
   malformed: query.includes("__MALFORMED_RESULT__"),
   stuck: query.includes("__STUCK__"),
+  slowStream: query.includes("__SLOW_STREAM__"),
 };
 
 function extractExpectedArtifacts(text) {
@@ -100,6 +101,12 @@ process.on("SIGINT", () => process.exit(130));
   if (markers.stuck) {
     setInterval(() => {}, 1000);
     return;
+  }
+  if (markers.slowStream) {
+    for (let i = 0; i < 8; i++) {
+      console.log(`slow stream progress ${i}`);
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+    }
   }
   await finish();
 })();

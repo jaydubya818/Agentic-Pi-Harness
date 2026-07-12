@@ -108,6 +108,26 @@ describe("PI_HERMES_CONTRACT_V2 golden mission", () => {
     }
   }, 20000);
 
+  it("does not flag a streaming worker as stuck even without supervisor heartbeats", async () => {
+    const workdir = await makeTempDir("pi-hermes-v2-work-");
+    const artifactRoot = await makeTempDir("pi-hermes-v2-artifacts-");
+    const stateRoot = await makeTempDir("pi-hermes-v2-state-");
+    const server = createContractServer(stateRoot, { emitSemanticHeartbeats: false, stuckTimeoutMs: 600 });
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    try {
+      const { sessionId } = await createSession(base, workdir);
+      const executionId = await executeGoldenMission(base, sessionId, artifactRoot, "__SLOW_STREAM__ keep streaming worker output");
+      const run = await waitForRun(base, executionId, 15000);
+
+      expect(run.failure_class).not.toBe("stuck_run");
+      expect(run.state).toBe("succeeded");
+    } finally {
+      await server.stop();
+    }
+  }, 20000);
+
   it("fails malformed worker result payloads as contract errors", async () => {
     const workdir = await makeTempDir("pi-hermes-v2-work-");
     const artifactRoot = await makeTempDir("pi-hermes-v2-artifacts-");
