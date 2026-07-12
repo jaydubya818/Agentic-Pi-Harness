@@ -52,6 +52,7 @@ interface ActiveExecution {
   partialLine: string;
   sawOutput: boolean;
   intent: "interrupt" | "cancel" | null;
+  outputChain: Promise<void>;
   timeoutError: string | null;
   timeoutHandle: NodeJS.Timeout | null;
   forceKillHandle: NodeJS.Timeout | null;
@@ -175,6 +176,7 @@ export class HermesAdapter {
       partialLine: "",
       sawOutput: false,
       intent: null,
+      outputChain: Promise.resolve(),
       timeoutError: null,
       timeoutHandle: null,
       forceKillHandle: null,
@@ -234,7 +236,12 @@ export class HermesAdapter {
       });
 
       transport.onOutput((chunk, stream) => {
-        void this.handleOutput(session, active, chunk, stream);
+        // Serialize chunk handling: partialLine reconstruction and log
+        // appends happen across awaits, so concurrent handlers would
+        // interleave lines out of order.
+        active.outputChain = active.outputChain
+          .then(() => this.handleOutput(session, active, chunk, stream))
+          .catch(() => { /* per-chunk append failure; keep draining */ });
       });
       transport.onExit((event) => {
         void this.handleExit(session, active, event.exitCode, event.signal);
@@ -434,6 +441,8 @@ export class HermesAdapter {
 
   private async handleExit(session: StoredSession, active: ActiveExecution, exitCode: number, signal?: number | string): Promise<void> {
     if (session.active !== active) return;
+
+    await active.outputChain.catch(() => { /* chunk failures already swallowed per-chunk */ });
 
     if (active.timeoutHandle) clearTimeout(active.timeoutHandle);
     if (active.forceKillHandle) clearTimeout(active.forceKillHandle);
