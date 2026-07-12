@@ -36,6 +36,19 @@ process.stdin.on('end', () => {
     expect(res.reason).toBe("blocked");
   });
 
+  it("survives a hook that exits without reading its stdin payload", async () => {
+    // A large payload overflows the pipe buffer, so the write finishes after
+    // the child has already exited and stdin raises EPIPE. Without an error
+    // handler on stdin that crashes the process instead of resolving.
+    const bigCtx = { ...ctx, payload: { blob: "x".repeat(1 << 21) } };
+    const script = `process.stdout.write('{"outcome":"continue"}');`;
+    const res = await runShellHook(
+      { command: ["node", "-e", script], hardTimeoutMs: 5000 },
+      bigCtx,
+    );
+    expect(res.outcome).toBe("continue");
+  });
+
   it("rejects on non-zero exit with E_HOOK_SHELL", async () => {
     await expect(
       runShellHook({ command: ["node", "-e", "process.exit(2)"], hardTimeoutMs: 5000 }, ctx),
