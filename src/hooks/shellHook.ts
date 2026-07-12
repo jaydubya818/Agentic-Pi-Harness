@@ -65,6 +65,10 @@ export function runShellHook(spec: ShellHookSpec, ctx: HookContext): Promise<Hoo
         reject(new PiHarnessError("E_HOOK_SHELL", "shell hook produced invalid JSON: " + String(e), { stdout }));
       }
     });
+    child.stdin.on("error", () => {
+      // EPIPE: the hook exited (or closed stdin) before reading the payload.
+      // The 'close' handler still settles the promise from exit code + stdout.
+    });
     child.stdin.write(JSON.stringify({
       event: ctx.event,
       sessionId: ctx.sessionId,
