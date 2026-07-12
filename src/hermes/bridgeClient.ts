@@ -87,6 +87,9 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
       headers: { ...authHeaders, "content-type": "application/json" },
       body: JSON.stringify({ workdir, env: input.env, profile: input.profile }),
     });
+    if (!sessionResponse.ok) {
+      throw new Error(`bridge session create failed: HTTP ${sessionResponse.status} ${await sessionResponse.text()}`);
+    }
     const adapterSession = await sessionResponse.json() as HermesAdapterSession;
 
     const request = {

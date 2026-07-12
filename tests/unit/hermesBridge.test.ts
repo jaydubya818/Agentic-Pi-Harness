@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { HermesBridgeServer } from "../../src/hermes/httpBridge.js";
+import { runTaskViaBridge } from "../../src/hermes/bridgeClient.js";
 
 const createdPaths: string[] = [];
 
@@ -322,6 +323,40 @@ describe("HermesBridgeServer", () => {
       expect(events.items.some((event) => event.type === "task.completed")).toBe(true);
     } finally {
       await secondServer.stop();
+    }
+  }, 15000);
+
+  it("fails fast with a clear error when session creation is unauthorized", async () => {
+    const stateRoot = await makeTempDir("pi-hermes-bridge-auth-state-");
+    const workdir = await makeTempDir("pi-hermes-bridge-auth-work-");
+    const outRoot = await makeTempDir("pi-hermes-bridge-auth-out-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      authToken: "expected-token",
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+    const listening = await server.start();
+
+    try {
+      await expect(runTaskViaBridge({
+        objective: "should never start",
+        workdir,
+        outRoot,
+        timeoutSeconds: 5,
+        bridgeUrl: `http://${listening.host}:${listening.port}`,
+        bridgeToken: "wrong-token",
+      })).rejects.toThrow(/bridge session create failed: HTTP 401/);
+    } finally {
+      await server.stop();
     }
   }, 15000);
 });
