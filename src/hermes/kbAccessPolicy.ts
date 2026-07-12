@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 export interface KnowledgeRoots {
   agenticKbRoot: string;
@@ -526,7 +526,7 @@ export function deriveHermesOutputDirFromV2Artifacts(paths: string[], rootsInput
 
 function isWithin(root: string, target: string): boolean {
   const rel = relative(root, target);
-  return rel === "" || (!rel.startsWith("..") && rel !== "..");
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 async function fileExists(path: string): Promise<boolean> {

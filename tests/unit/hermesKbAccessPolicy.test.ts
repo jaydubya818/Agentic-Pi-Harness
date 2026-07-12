@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { HermesBridgeServer } from "../../src/hermes/httpBridge.js";
 import {
+  classifyKnowledgePath,
   createKnowledgeTombstone,
   deleteKnowledgePath,
   ensureKnowledgeDirectorySkeleton,
@@ -127,6 +128,17 @@ describe("KB access policy V1", () => {
     const text = await readFile(tracePath, "utf8");
     expect(text).toContain('"started"');
     expect(text).not.toContain('"rewrite"');
+  });
+
+  it("classifies dot-dot-prefixed names inside a root as inside that root", async () => {
+    const roots = await createRoots();
+    const weird = join(roots.agenticKbRoot, "..weird.md");
+    const info = classifyKnowledgePath(weird, roots);
+    expect(info.inAgenticKb).toBe(true);
+    expect(info.pathClass).toBe("kb_other");
+
+    const sibling = resolve(roots.agenticKbRoot, "..", "kb-sibling", "note.md");
+    expect(classifyKnowledgePath(sibling, roots).pathClass).toBe("outside");
   });
 
   it("denies Hermes deletes outside approved knowledge roots", async () => {
