@@ -5,6 +5,13 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 ## [Unreleased]
 
 ### Fixed
+- Trace files can no longer be truncated by an explicit create-mode write to an existing append-only trace path; the write now fails closed with `kb.trace_overwrite_denied`.
+- Knowledge-root containment no longer misclassifies legal dot-dot-prefixed names (e.g. `..weird.md`) directly under a root as outside it.
+- Stuck-run detection compares against the last observed worker progress/output event instead of the supervisor's own emitted heartbeats. Previously a hung worker was never flagged with heartbeats enabled (the default), and every run older than `stuckTimeoutMs` was killed with them disabled even while actively streaming.
+- Shell hooks that exit before reading their stdin payload no longer crash the harness with an unhandled `EPIPE`; the hook promise settles from exit code + stdout as intended.
+- `wrapToolOutput` escapes quote/angle-bracket characters in the `tool` and `id` attributes so a hostile tool identity cannot break out of the untrusted `tool_output` envelope or forge `trusted="true"`.
+- `runTaskViaBridge` checks the `/sessions` HTTP status and fails fast with the response body instead of surfacing a missing `session_id` later as an unrelated error.
+- Hermes adapter output chunks are handled strictly in order (serialized per execution); concurrent chunk handlers could previously interleave raw-log appends and reconstruct line boundaries out of order.
 - Hermes deletes outside both knowledge roots are now denied (previously fell through every guard to an unconditional `unlink`).
 - Append-mode knowledge writes use a true `O_APPEND` append instead of read-whole-file + truncate-and-rewrite, so a crash mid-append can no longer lose an entire trace.
 - `promoteKnowledgeCandidate` fails fast if the canonical target or approval record already exists instead of silently overwriting promoted knowledge.
