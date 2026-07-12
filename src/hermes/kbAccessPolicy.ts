@@ -250,6 +250,9 @@ export function assertKnowledgeWriteAllowed(input: KnowledgeWriteAssertionInput)
     if (input.mode === "overwrite") {
       throw new Error(`Hermes trace writes must be append-only or create-only: ${info.path}`);
     }
+    if (input.mode === "create" && exists) {
+      throw new Error(`Hermes trace writes must be append-only once the trace exists: ${info.path}`);
+    }
     return info;
   }
 

@@ -115,6 +115,20 @@ describe("KB access policy V1", () => {
     expect(text).toContain('"completed"');
   });
 
+  it("denies Hermes create-mode writes that would truncate an existing trace", async () => {
+    const roots = await createRoots();
+    const runRoot = join(roots.agenticKbRoot, "missions", "2026", "mission-alpha", "runs", "run-2");
+    const { tracesDir } = await ensureMissionRunSkeleton({ missionRoot: runRoot });
+    const tracePath = join(tracesDir, "trace-mission-alpha-run-2.jsonl");
+
+    await writeKnowledgeText({ actor: "hermes", path: tracePath, roots, mode: "create", content: '{"event":"started"}\n' });
+    await expect(writeKnowledgeText({ actor: "hermes", path: tracePath, roots, mode: "create", content: '{"event":"rewrite"}\n' })).rejects.toThrow(/append-only/);
+
+    const text = await readFile(tracePath, "utf8");
+    expect(text).toContain('"started"');
+    expect(text).not.toContain('"rewrite"');
+  });
+
   it("denies Hermes deletes outside approved knowledge roots", async () => {
     const roots = await createRoots();
     const outsideDir = await makeTempDir("kb-outside-");
