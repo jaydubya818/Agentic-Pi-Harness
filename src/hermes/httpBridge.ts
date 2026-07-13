@@ -39,6 +39,7 @@ import {
   type PiHermesTaskEnvelopeV2,
 } from "./index.js";
 import { HermesBridgeStateStore, type BridgeEventRecord, type BridgeStateRunRecord } from "./bridgeState.js";
+import { maybeStartMcAdapter, type McAdapterHandle } from "../mc/index.js";
 
 interface StartSessionBody {
   workdir: string;
@@ -92,6 +93,7 @@ export class HermesBridgeServer {
   private readonly activeWatchers = new Set<Promise<void>>();
   private readonly subscribers = new Map<string, Set<SseSubscriber>>();
   private readonly heartbeatControllers = new Map<string, ActiveHeartbeatController>();
+  private mcAdapter: McAdapterHandle | null = null;
 
   constructor(options: HermesBridgeServerOptions = {}) {
     this.host = options.host ?? "127.0.0.1";
@@ -137,11 +139,14 @@ export class HermesBridgeServer {
     const address = this.server.address();
     const port = typeof address === "object" && address ? address.port : this.port;
     this.logger.log("info", "hermes.bridge.started", { host: this.host, port });
+    this.mcAdapter = await maybeStartMcAdapter(this);
     return { host: this.host, port };
   }
 
   async stop(): Promise<void> {
     if (!this.server) return;
+    this.mcAdapter?.stop();
+    this.mcAdapter = null;
     for (const controller of this.heartbeatControllers.values()) controller.stop();
     this.heartbeatControllers.clear();
     for (const subscriberSet of this.subscribers.values()) {
@@ -157,6 +162,19 @@ export class HermesBridgeServer {
 
   getRun(executionId: string): HermesBridgeRunRecord | null {
     return this.runs.get(executionId) ?? null;
+  }
+
+  /** Start an adapter session through the same path as POST /sessions (used by the MC executor adapter). */
+  async startExternalSession(workdir: string, options: { env?: NodeJS.ProcessEnv; profile?: string } = {}): Promise<HermesAdapterSession> {
+    const session = await this.adapter.start_session(workdir, options);
+    this.sessions.set(session.session_id, session);
+    await this.stateStore.persistSession(session);
+    return session;
+  }
+
+  /** Submit a legacy task envelope through the same execution path as POST /execute (used by the MC executor adapter). */
+  async submitExternalTask(request: Record<string, unknown>): Promise<Awaited<ReturnType<HermesAdapter["send_task"]>>> {
+    return this.executeLegacy(HermesTaskRequestSchema.parse(request));
   }
 
   private isAuthorized(req: IncomingMessage): boolean {

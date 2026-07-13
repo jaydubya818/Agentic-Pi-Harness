@@ -86,12 +86,23 @@ else
   TOKEN="$(generate_token)"
 fi
 
+MC_ADAPTER_ENV_FILE="${MC_ADAPTER_ENV_FILE:-$PI_HOME/mc-adapter.env}"
+
 RUN_SCRIPT_CONTENT=$(cat <<EOF
 #!/bin/zsh
 set -euo pipefail
 
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PI_HERMES_BRIDGE_TOKEN="\$(/bin/cat $TOKEN_FILE)"
+
+# Optional Mission Control executor adapter config (MC_* env vars).
+# Create $MC_ADAPTER_ENV_FILE with e.g. MC_EXECUTOR_ENABLED=1 and
+# MC_CONVEX_URL=... to enable; absent file leaves the adapter disabled.
+if [[ -f "$MC_ADAPTER_ENV_FILE" ]]; then
+  set -a
+  source "$MC_ADAPTER_ENV_FILE"
+  set +a
+fi
 
 cd $REPO_ROOT
 exec npm run hermes:bridge -- --host $BRIDGE_HOST --port $BRIDGE_PORT --state-root $STATE_ROOT
