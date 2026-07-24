@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { PiHarnessError } from "../errors.js";
 import { PolicyDecision } from "../schemas/index.js";
 import { ToolClass } from "../tools/concurrency.js";
@@ -16,6 +17,23 @@ export interface WorkerToolDecision {
   allowed: boolean;
   reason?: string;
   manifestInfluence: PolicyDecision["manifestInfluence"];
+}
+
+function normalizeForPrefixCheck(path: string): string {
+  return posix.normalize(path.replace(/\\/g, "/"));
+}
+
+/**
+ * Boundary-aware prefix containment. Plain `startsWith` allowed two bypasses:
+ * sibling directories ("sandbox-evil/x" matched prefix "sandbox"), and
+ * traversal ("sandbox/../secret" matched prefix "sandbox/").
+ */
+function isWithinPrefix(path: string, prefix: string): boolean {
+  const normalizedPath = normalizeForPrefixCheck(path);
+  if (normalizedPath === ".." || normalizedPath.startsWith("../")) return false;
+  const normalizedPrefix = normalizeForPrefixCheck(prefix).replace(/\/+$/, "");
+  if (normalizedPrefix === "" || normalizedPrefix === ".") return true;
+  return normalizedPath === normalizedPrefix || normalizedPath.startsWith(normalizedPrefix + "/");
 }
 
 function extractPaths(input: unknown): string[] {
@@ -75,7 +93,7 @@ export function evaluateWorkerToolUse(input: {
       // otherwise pass vacuously (`[].every(...)` is true) and bypass the
       // prefix restriction entirely.
       const allowed = paths.length > 0
-        && paths.every((path) => input.workerControls!.allowedWritePathPrefixes!.some((prefix) => path.startsWith(prefix)));
+        && paths.every((path) => input.workerControls!.allowedWritePathPrefixes!.some((prefix) => isWithinPrefix(path, prefix)));
       if (!allowed) {
         return {
           allowed: false,
