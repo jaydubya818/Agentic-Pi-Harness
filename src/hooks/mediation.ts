@@ -80,10 +80,21 @@ export interface PostToolHookDispatchResult {
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  return await Promise.race([
-    promise,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`hook timeout after ${timeoutMs}ms`)), timeoutMs)),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`hook timeout after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    // Losing timers must not keep the event loop alive for up to `timeoutMs`
+    // after every hook call, and a hook that rejects after losing the race
+    // must not surface as an unhandled rejection.
+    if (timer !== undefined) clearTimeout(timer);
+    void promise.catch(() => {});
+  }
 }
 
 function validateResponseForEvent(event: ToolHookEvent, value: unknown): ToolHookResponse | null {

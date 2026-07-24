@@ -86,8 +86,19 @@ function digest(v: unknown): string {
 }
 
 async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return await Promise.race([
-    p,
-    new Promise<T>((_, rej) => setTimeout(() => rej(new Error("hook timeout")), ms)),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<T>((_, rej) => {
+        timer = setTimeout(() => rej(new Error("hook timeout")), ms);
+      }),
+    ]);
+  } finally {
+    // Losing timers must not keep the event loop alive for up to `ms` after
+    // every hook call, and a hook that rejects after losing the race must
+    // not surface as an unhandled rejection.
+    if (timer !== undefined) clearTimeout(timer);
+    void p.catch(() => {});
+  }
 }

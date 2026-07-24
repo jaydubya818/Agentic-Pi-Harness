@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { dispatchPostToolHooks, dispatchPreToolHooks, mergeHookDeniedDecision, RegisteredToolHook } from "../../src/hooks/mediation.js";
 import { PolicyDecision } from "../../src/schemas/index.js";
 
@@ -69,6 +69,32 @@ describe("hook mediation helpers", () => {
     expect(order).toEqual(["a", "b"]);
     expect(result.deniedBy).toEqual({ hookId: "b", decision: "deny", reason: "nope" });
     expect(result.summaries.map((summary) => summary.status)).toEqual(["continue", "deny"]);
+  });
+
+  it("clears the timeout timer once a hook settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const result = await dispatchPreToolHooks([
+        { hookId: "fast", event: "PreToolUse", timeoutMs: 60_000, fn: () => ({ outcome: "continue" }) },
+      ], {
+        event: "PreToolUse",
+        sessionId: "s1",
+        turnIndex: 0,
+        payload: {
+          toolCallId: "tool-1",
+          toolName: "read_file",
+          mode: "assist",
+          input: { path: "tests/math.test.ts" },
+          baseDecision: { result: "approve", provenanceMode: "real", winningRuleId: "allow-read" },
+        },
+      });
+
+      expect(result.summaries.map((summary) => summary.status)).toEqual(["continue"]);
+      // The losing timeout timer must be cleared, not left pending for 60s.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("treats modify as invalid for pre hooks and continues", async () => {
