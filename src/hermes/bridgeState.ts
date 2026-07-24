@@ -121,12 +121,23 @@ export class HermesBridgeStateStore {
   }
 
   async loadPreflightDenials(): Promise<BridgePreflightDenialRecord[]> {
+    let raw: string;
     try {
-      const raw = await readFile(this.preflightDenialsPath(), "utf8");
-      return raw.split("\n").filter(Boolean).map((line) => JSON.parse(line) as BridgePreflightDenialRecord);
+      raw = await readFile(this.preflightDenialsPath(), "utf8");
     } catch {
       return [];
     }
+    const records: BridgePreflightDenialRecord[] = [];
+    for (const line of raw.split("\n")) {
+      if (!line) continue;
+      try {
+        records.push(JSON.parse(line) as BridgePreflightDenialRecord);
+      } catch {
+        // One torn/corrupt line (e.g. a crash mid-append) must not hide
+        // every other recorded denial.
+      }
+    }
+    return records;
   }
 
   private async loadSessions(): Promise<HermesSession[]> {
