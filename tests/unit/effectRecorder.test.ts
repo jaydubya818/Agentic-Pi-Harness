@@ -34,6 +34,24 @@ describe("effect recorder", () => {
     expect(record.unifiedDiff).toContain("+++ b/");
   });
 
+  it("records hashes plus an omission marker instead of diffing huge files", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-effect-huge-"));
+    const file = join(dir, "big.txt");
+    const before = Array.from({ length: 3000 }, (_, i) => `before ${i}`).join("\n");
+    const after = Array.from({ length: 3000 }, (_, i) => `after ${i}`).join("\n");
+    await writeFile(file, before);
+
+    const recorder = new EffectRecorder();
+    await recorder.snapshotPre([file], "tool-huge");
+    await writeFile(file, after);
+    const record = await recorder.capturePost("session-1", "tool-huge", "write_file", [file]);
+
+    expect(record.preHashes[file]).toMatch(/^sha256:/);
+    expect(record.postHashes[file]).toMatch(/^sha256:/);
+    expect(record.unifiedDiff).toContain("diff omitted");
+    expect(record.unifiedDiff.length).toBeLessThan(500);
+  });
+
   it("writes, reads, and renders effect logs for what-changed", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-effect-log-"));
     const path = join(dir, "effects.jsonl");
