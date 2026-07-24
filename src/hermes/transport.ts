@@ -62,6 +62,7 @@ class ScriptPtyHermesTransport implements HermesTransport {
 
   constructor(private readonly child: ChildProcessByStdio<null, Readable, Readable>) {
     this.pid = child.pid ?? -1;
+    child.on("error", () => { /* surfaced as exit 127 via onExit */ });
   }
 
   onOutput(listener: (chunk: string, stream: HermesTransportStream) => void): void {
@@ -70,10 +71,7 @@ class ScriptPtyHermesTransport implements HermesTransport {
   }
 
   onExit(listener: (event: HermesTransportExit) => void): void {
-    this.child.on("exit", (exitCode, signal) => listener({
-      exitCode: exitCode ?? 1,
-      signal: signal ?? undefined,
-    }));
+    attachExitListener(this.child, listener);
   }
 
   kill(signal?: string): void {
@@ -88,6 +86,7 @@ class SubprocessHermesTransport implements HermesTransport {
 
   constructor(private readonly child: ChildProcessByStdio<null, Readable, Readable>) {
     this.pid = child.pid ?? -1;
+    child.on("error", () => { /* surfaced as exit 127 via onExit */ });
   }
 
   onOutput(listener: (chunk: string, stream: HermesTransportStream) => void): void {
@@ -96,10 +95,7 @@ class SubprocessHermesTransport implements HermesTransport {
   }
 
   onExit(listener: (event: HermesTransportExit) => void): void {
-    this.child.on("exit", (exitCode, signal) => listener({
-      exitCode: exitCode ?? 1,
-      signal: signal ?? undefined,
-    }));
+    attachExitListener(this.child, listener);
   }
 
   kill(signal?: string): void {
@@ -192,6 +188,23 @@ function isExecutable(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+function attachExitListener(child: ChildProcess, listener: (event: HermesTransportExit) => void): void {
+  let settled = false;
+  child.on("exit", (exitCode, signal) => {
+    if (settled) return;
+    settled = true;
+    listener({ exitCode: exitCode ?? 1, signal: signal ?? undefined });
+  });
+  child.on("error", () => {
+    if (settled) return;
+    settled = true;
+    // Spawn failures (e.g. ENOENT) never emit 'exit'. Report the shell
+    // convention for "command not found" instead of letting the unhandled
+    // 'error' event crash the whole harness process.
+    listener({ exitCode: 127 });
+  });
 }
 
 function killChild(child: ChildProcess, signal?: string): void {
