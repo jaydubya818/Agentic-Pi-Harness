@@ -595,11 +595,16 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
   };
   await safeWriteJson(inp.checkpointPath, checkpoint);
 
+  const toolNamesByCallId = new Map<string, string>();
+  for (const event of events) {
+    if (event.type === "tool_use") toolNamesByCallId.set(event.id, event.name);
+  }
+  const effectPathsByCallId = new Map(effects.map((effect) => [effect.toolCallId, effect.paths]));
   const sofieToolEvidence: SofieToolEvidence[] = decisions.map((decision) => ({
     toolCallId: decision.toolCallId,
-    toolName: events.find((event): event is ToolUseEvent => event.type === "tool_use" && event.id === decision.toolCallId)?.name ?? "unknown",
+    toolName: toolNamesByCallId.get(decision.toolCallId) ?? "unknown",
     result: decision.result,
-    paths: effects.find((effect) => effect.toolCallId === decision.toolCallId)?.paths ?? [],
+    paths: effectPathsByCallId.get(decision.toolCallId) ?? [],
   }));
 
   const sofieAnswer = inp.sofie?.enabled
