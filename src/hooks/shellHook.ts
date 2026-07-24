@@ -19,6 +19,13 @@ export interface ShellHookSpec {
   hardTimeoutMs?: number;
 }
 
+/**
+ * Hook responses are a single small JSON object; a hook that streams
+ * megabytes is misbehaving. Capping capture keeps a runaway hook from
+ * ballooning harness memory while the hard timeout winds down.
+ */
+const MAX_CAPTURE_CHARS = 4 * 1024 * 1024;
+
 export function makeShellHook(spec: ShellHookSpec): InProcessHook {
   return (ctx: HookContext): Promise<HookResponse> => runShellHook(spec, ctx);
 }
@@ -40,13 +47,20 @@ export function runShellHook(spec: ShellHookSpec, ctx: HookContext): Promise<Hoo
     });
     let stdout = "";
     let stderr = "";
+    let stdoutOverflow = false;
     let killed = false;
     const kill = setTimeout(() => {
       killed = true;
       killHookTree(child);
     }, hardTimeout);
-    child.stdout.on("data", (d) => { stdout += d.toString("utf8"); });
-    child.stderr.on("data", (d) => { stderr += d.toString("utf8"); });
+    child.stdout.on("data", (d) => {
+      if (stdout.length >= MAX_CAPTURE_CHARS) { stdoutOverflow = true; return; }
+      stdout += d.toString("utf8");
+    });
+    child.stderr.on("data", (d) => {
+      if (stderr.length >= MAX_CAPTURE_CHARS) return;
+      stderr += d.toString("utf8");
+    });
     child.on("error", (err) => {
       clearTimeout(kill);
       reject(new PiHarnessError("E_HOOK_SHELL", "shell hook spawn failed: " + err.message));
@@ -59,6 +73,10 @@ export function runShellHook(spec: ShellHookSpec, ctx: HookContext): Promise<Hoo
       }
       if (code !== 0) {
         reject(new PiHarnessError("E_HOOK_SHELL", "shell hook exited " + code, { stderr, stdout }));
+        return;
+      }
+      if (stdoutOverflow) {
+        reject(new PiHarnessError("E_HOOK_SHELL", "shell hook stdout exceeded " + MAX_CAPTURE_CHARS + " bytes"));
         return;
       }
       try {

@@ -86,6 +86,16 @@ setTimeout(() => {}, 30000);`;
     ).rejects.toBeInstanceOf(PiHarnessError);
   });
 
+  it("rejects a hook that floods stdout past the capture cap", async () => {
+    const script = `
+const chunk = Buffer.alloc(1 << 20, 97);
+for (let i = 0; i < 8; i++) process.stdout.write(chunk);
+`;
+    await expect(
+      runShellHook({ command: ["node", "-e", script], hardTimeoutMs: 10000 }, ctx),
+    ).rejects.toThrow(/stdout exceeded/);
+  });
+
   it("rejects on empty command array", async () => {
     await expect(runShellHook({ command: [] }, ctx)).rejects.toBeInstanceOf(PiHarnessError);
   });
