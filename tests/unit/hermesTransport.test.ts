@@ -18,6 +18,25 @@ describe("hermes transport", () => {
     expect(exit.exitCode).toBe(127);
   });
 
+  it("reassembles multi-byte characters split across output chunks", async () => {
+    const script = `
+const b = Buffer.from("caf\u00e9", "utf8");
+process.stdout.write(b.subarray(0, 4));
+setTimeout(() => { process.stdout.write(b.subarray(4)); process.exit(0); }, 100);`;
+    const transport = spawnHermesTransport({
+      command: process.execPath,
+      args: ["-e", script],
+      cwd: process.cwd(),
+      env: process.env,
+      prefer: "subprocess",
+    });
+    let output = "";
+    transport.onOutput((chunk) => { output += chunk; });
+    await waitForExit(transport);
+    expect(output).toBe("caf\u00e9");
+    expect(output).not.toContain("\uFFFD");
+  });
+
   it("still reports real exit codes for commands that run", async () => {
     const transport = spawnHermesTransport({
       command: process.execPath,
