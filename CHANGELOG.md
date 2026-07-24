@@ -5,6 +5,12 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 ## [Unreleased]
 
 ### Fixed
+- Sub-agent slugs are allowlisted before they become filesystem path segments and `pi/<slug>-<ts>` branch names; traversal (`../evil`), nested (`a/b`), and git-ref-syntax slugs are rejected, and the worktree base check is boundary-safe instead of a raw `startsWith`.
+- A missing or non-executable Hermes command no longer crashes the harness with an unhandled `'error'` event from the spawned child; both stdio transports surface spawn failures as a single exit event with code 127.
+- The shell hook hard timeout now SIGKILLs the hook's whole process group (POSIX), so hung descendants die with the hook as the contract comment always promised; shell hook stdout/stderr capture is bounded at 4MB per stream.
+- `runTaskViaBridge` no longer aborts a still-executing governed run because one `/runs` poll returned a non-2xx or non-JSON response; polls retry until the deadline and raw event capture is best-effort once the result exists.
+- The effect recorder caps its LCS diff at a 4M-cell budget; a rewrite of a huge text file records pre/post hashes plus a `[diff omitted]` marker instead of allocating an O(n·m) table that could OOM the harness.
+- Transport output is decoded with a per-stream `StringDecoder`, so a multi-byte UTF-8 character split across pipe reads no longer reaches the adapter as U+FFFD replacement characters.
 - Hook timeout races (`hooks/dispatcher.ts`, `hooks/mediation.ts`) clear the losing timer instead of keeping the event loop alive for up to `timeoutMs` per hook call, and a hook that rejects after losing the race no longer surfaces as an unhandled rejection.
 - Worker-mode `allowedWritePathPrefixes` matching is now normalized and boundary-aware: sibling directories sharing a string prefix (`sandbox-evil/` vs `sandbox`) and traversal escapes (`sandbox/../src/x`) are denied.
 - Client-supplied `execution_id` values are preflight-denied by `/execute` unless they are safe single path segments; the bridge state store also refuses unsafe session/execution segments, closing a path traversal out of the state root.
@@ -34,6 +40,7 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 - `npm test` no longer runs the hash-chain microbench by default; the perf bench moved to opt-in `npm run bench`.
 
 ### Performance
+- The bridge client backs off run polling from 50ms to a 500ms ceiling instead of hammering `/runs` at ~20 req/s for the whole run.
 - `compactHistory` indexes compactable segments by event index (Map lookup) instead of a per-event linear scan.
 - The query loop builds sofie tool evidence from two lookup maps instead of scanning the full event and effect arrays per policy decision.
 - `read_events` finds the last event for an execution with a reverse index walk instead of copying and reversing the whole session event array on every wake-up.
