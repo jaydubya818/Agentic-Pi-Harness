@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { createWorktree, Worktree } from "./worktree.js";
+import { assertSafeSlug, createWorktree, Worktree } from "./worktree.js";
 
 export interface ParentSessionBoundary {
   sessionId: string;
@@ -44,6 +44,9 @@ export function childArtifactDir(parent: ParentSessionBoundary, childId: string)
 
 export async function runSubagentTask<T>(input: RunSubagentTaskInput<T>): Promise<SubagentRunResult<T>> {
   const signal = input.signal ?? new AbortController().signal;
+  // The slug lands in both the child artifact path and the worktree branch,
+  // so reject traversal / ref-injection slugs before touching the filesystem.
+  assertSafeSlug(input.slug);
   const childId = createChildSessionId(input.parent.sessionId, input.order, input.slug);
   const artifactDir = childArtifactDir(input.parent, childId);
   await mkdir(artifactDir, { recursive: true });

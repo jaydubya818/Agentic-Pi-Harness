@@ -31,6 +31,17 @@ describe("subagent runtime", () => {
     expect(childArtifactDir(parent, "s1:child:0:lint")).toBe(join("/out", "sessions", "s1", "children", "s1:child:0:lint"));
   });
 
+  it("rejects path-unsafe slugs before creating any artifact directories", async () => {
+    const outRoot = await mkdtemp(join(tmpdir(), "pi-subagent-slug-"));
+    await expect(runSubagentTask({
+      parent: { sessionId: "s1", repoRoot: "/repo", outRoot, mode: "assist" },
+      order: 0,
+      slug: "../../evil",
+      async run() { return null; },
+    })).rejects.toMatchObject({ code: "E_WORKTREE_ESCAPE" });
+    await rm(outRoot, { recursive: true, force: true });
+  });
+
   it("runs a child in an isolated worktree and cleans it up afterwards", async () => {
     const repoRoot = await initRepo();
     const outRoot = await mkdtemp(join(tmpdir(), "pi-subagent-out-"));
