@@ -66,6 +66,17 @@ export interface BridgeStateSnapshot {
   runs: BridgeStateRunRecord[];
 }
 
+/**
+ * Session and execution ids are used as filesystem path segments under the
+ * bridge state root. Reject anything that could traverse out of it.
+ */
+export function assertSafeStateIdSegment(value: string, label: string): string {
+  if (value === "." || value === ".." || value.includes("/") || value.includes("\\") || value.includes("\0")) {
+    throw new Error(`${label} is not a safe path segment: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
 export class HermesBridgeStateStore {
   readonly root: string;
 
@@ -170,11 +181,11 @@ export class HermesBridgeStateStore {
   }
 
   private sessionPath(sessionId: string): string {
-    return join(this.sessionsDir(), `${sessionId}.json`);
+    return join(this.sessionsDir(), `${assertSafeStateIdSegment(sessionId, "session_id")}.json`);
   }
 
   private runDir(executionId: string): string {
-    return join(this.runsDir(), executionId);
+    return join(this.runsDir(), assertSafeStateIdSegment(executionId, "execution_id"));
   }
 
   private runPath(executionId: string): string {
