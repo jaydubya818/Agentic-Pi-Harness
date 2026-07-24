@@ -42,6 +42,17 @@ describe("sub-agent worktree isolation", () => {
     }
   });
 
+  it("rejects slugs that could traverse paths or inject git ref syntax", async () => {
+    const repo = await initRepo();
+    try {
+      for (const slug of ["../evil", "a/b", "-b", ".hidden", "a b", "a~1", ""]) {
+        await expect(createWorktree(repo, slug)).rejects.toMatchObject({ code: "E_WORKTREE_ESCAPE" });
+      }
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
+
   it("dispose cleans up the worktree directory and branch", async () => {
     const repo = await initRepo();
     const wt = await createWorktree(repo, "cleanup");
