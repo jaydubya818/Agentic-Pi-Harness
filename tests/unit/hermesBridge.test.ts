@@ -146,6 +146,67 @@ describe("HermesBridgeServer", () => {
     }
   }, 15000);
 
+  it("rejects path-traversal execution ids before they reach bridge state", async () => {
+    const workdir = await makeTempDir("pi-hermes-bridge-trav-work-");
+    const outputDir = await makeTempDir("pi-hermes-bridge-trav-out-");
+    const stateRoot = await makeTempDir("pi-hermes-bridge-trav-state-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      enforceKnowledgePolicy: false,
+      stateRoot: join(stateRoot, "bridge"),
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot: join(stateRoot, "adapter"),
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    try {
+      const sessionResponse = await fetch(`${base}/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workdir }),
+      });
+      expect(sessionResponse.status).toBe(200);
+      const session = await sessionResponse.json() as { session_id: string };
+
+      const executeResponse = await fetch(`${base}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          request_id: "req_bridge_traversal",
+          session_id: session.session_id,
+          execution_id: "../../escaped-run",
+          objective: "Attempt to escape the bridge state root.",
+          workdir,
+          allowed_tools: ["bash"],
+          allowed_actions: ["read"],
+          timeout_seconds: 20,
+          output_dir: outputDir,
+          metadata: {
+            mission_id: "mission-bridge-traversal",
+            run_id: "run-bridge-traversal",
+            step_id: "step-1",
+          },
+        }),
+      });
+      expect(executeResponse.status).toBe(400);
+      const body = await executeResponse.json() as { error: string };
+      expect(body.error).toMatch(/not a safe path segment/);
+
+      const denials = await (await fetch(`${base}/preflight-denials`)).json() as Array<{ code: string }>;
+      expect(denials.some((denial) => denial.code === "legacy_preflight_denied")).toBe(true);
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("starts sessions and executes Hermes runs over HTTP", async () => {
     const workdir = await makeTempDir("pi-hermes-bridge-work-");
     const outputDir = await makeTempDir("pi-hermes-bridge-out-");

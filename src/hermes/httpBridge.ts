@@ -38,7 +38,7 @@ import {
   type PiHermesStructuredEventV2,
   type PiHermesTaskEnvelopeV2,
 } from "./index.js";
-import { HermesBridgeStateStore, type BridgeEventRecord, type BridgeStateRunRecord } from "./bridgeState.js";
+import { assertSafeStateIdSegment, HermesBridgeStateStore, type BridgeEventRecord, type BridgeStateRunRecord } from "./bridgeState.js";
 
 interface StartSessionBody {
   workdir: string;
@@ -350,6 +350,7 @@ export class HermesBridgeServer {
   private async executeLegacy(request: HermesTaskRequest) {
     const session = this.sessions.get(request.session_id);
     if (!session) throw new Error(`unknown session_id: ${request.session_id}`);
+    if (request.execution_id) assertSafeStateIdSegment(request.execution_id, "execution_id");
     if (this.enforceKnowledgePolicy) {
       const info = classifyKnowledgePath(request.output_dir, this.knowledgeRoots);
       if (!["wiki", "kb_discovery", "kb_handoff_inbound", "kb_mission_outputs"].includes(info.pathClass)) {
@@ -376,6 +377,7 @@ export class HermesBridgeServer {
   private async executeV2(task: PiHermesTaskEnvelopeV2) {
     const session = this.sessions.get(task.session_id);
     if (!session) throw new Error(`unknown session_id: ${task.session_id}`);
+    assertSafeStateIdSegment(task.execution_id, "execution_id");
 
     if (this.enforceKnowledgePolicy) {
       await this.preflightV2KnowledgePolicy(task);
