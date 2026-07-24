@@ -36,10 +36,21 @@ async function readText(path: string): Promise<string | null> {
  * external dependency so the harness stays self-contained. If we ever need
  * 3-way merges or word-level diffs we'll pull in `diff`.
  */
+/**
+ * LCS table budget. The diff below allocates an (n+1)x(m+1) number table,
+ * so two ~50k-line files would burn tens of GB and stall the loop. Past
+ * this budget we record hashes plus a marker instead of a full diff.
+ */
+const MAX_LCS_CELLS = 4_000_000;
+
 function unifiedDiff(a: string, b: string, path: string): string {
   if (a === b) return "";
   const aLines = a.split("\n");
   const bLines = b.split("\n");
+  if ((aLines.length + 1) * (bLines.length + 1) > MAX_LCS_CELLS) {
+    return `--- a/${path}\n+++ b/${path}\n@@ -1,${aLines.length} +1,${bLines.length} @@\n` +
+           `[diff omitted: ${aLines.length}x${bLines.length} lines exceeds diff budget]\n`;
+  }
   const ops = lcsDiff(aLines, bLines);
   const body: string[] = [];
   for (const op of ops) {
