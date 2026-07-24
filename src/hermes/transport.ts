@@ -3,6 +3,7 @@ import { spawn as spawnChildProcess } from "node:child_process";
 import type { ChildProcess, ChildProcessByStdio } from "node:child_process";
 import { delimiter, isAbsolute, join } from "node:path";
 import type { Readable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import process from "node:process";
 import { spawn as spawnPty, type IPty } from "node-pty";
 
@@ -66,8 +67,10 @@ class ScriptPtyHermesTransport implements HermesTransport {
   }
 
   onOutput(listener: (chunk: string, stream: HermesTransportStream) => void): void {
-    this.child.stdout.on("data", (chunk: Buffer | string) => listener(chunk.toString(), "pty"));
-    this.child.stderr.on("data", (chunk: Buffer | string) => listener(chunk.toString(), "pty"));
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
+    this.child.stdout.on("data", (chunk: Buffer | string) => listener(decodeChunk(stdoutDecoder, chunk), "pty"));
+    this.child.stderr.on("data", (chunk: Buffer | string) => listener(decodeChunk(stderrDecoder, chunk), "pty"));
   }
 
   onExit(listener: (event: HermesTransportExit) => void): void {
@@ -90,8 +93,10 @@ class SubprocessHermesTransport implements HermesTransport {
   }
 
   onOutput(listener: (chunk: string, stream: HermesTransportStream) => void): void {
-    this.child.stdout.on("data", (chunk: Buffer | string) => listener(chunk.toString(), "stdout"));
-    this.child.stderr.on("data", (chunk: Buffer | string) => listener(chunk.toString(), "stderr"));
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
+    this.child.stdout.on("data", (chunk: Buffer | string) => listener(decodeChunk(stdoutDecoder, chunk), "stdout"));
+    this.child.stderr.on("data", (chunk: Buffer | string) => listener(decodeChunk(stderrDecoder, chunk), "stderr"));
   }
 
   onExit(listener: (event: HermesTransportExit) => void): void {
@@ -188,6 +193,15 @@ function isExecutable(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Pipe reads can split a multi-byte UTF-8 character across two 'data'
+ * events; per-chunk toString() would turn each half into U+FFFD. A
+ * per-stream StringDecoder carries the partial bytes to the next chunk.
+ */
+function decodeChunk(decoder: StringDecoder, chunk: Buffer | string): string {
+  return typeof chunk === "string" ? chunk : decoder.write(chunk);
 }
 
 function attachExitListener(child: ChildProcess, listener: (event: HermesTransportExit) => void): void {
