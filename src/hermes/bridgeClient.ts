@@ -118,6 +118,7 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
     if (executeResponse.status !== 202) throw new Error(`bridge execute failed: ${JSON.stringify(accepted)}`);
 
     let run: any = null;
+    let pollDelayMs = 50;
     const deadline = Date.now() + ((input.timeoutSeconds ?? 900) * 1000) + 5000;
     while (Date.now() < deadline) {
       try {
@@ -131,7 +132,10 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
         // A single flaky poll (connection reset, non-JSON error body) must
         // not abort a governed run that is still executing; keep polling.
       }
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, pollDelayMs));
+      // Fast first polls keep short embedded runs snappy; back off to 500ms
+      // so long-running governed work is not hammered with ~20 req/s.
+      pollDelayMs = Math.min(pollDelayMs * 2, 500);
     }
 
     try {
