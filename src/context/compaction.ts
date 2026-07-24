@@ -55,8 +55,9 @@ export function compactHistory(events: StreamEvent[], opts: CompactOptions): { e
     return { events, record: null };
   }
 
+  const segmentsByIndex = new Map(segments.map((segment) => [segment.index, segment]));
   const compactedEvents = events.map((event, index) => {
-    const segment = segments.find((candidate) => candidate.index === index);
+    const segment = segmentsByIndex.get(index);
     if (!segment || event.type !== "tool_result") return event;
     return {
       ...event,
