@@ -299,7 +299,10 @@ export async function writeKnowledgeText(input: WriteKnowledgeTextInput): Promis
   }
   await mkdir(dirname(path), { recursive: true });
   if (mode === "append") await writeAppend(path, input.content);
-  else await writeFile(path, ensureTrailingNewline(input.content), "utf8");
+  // "wx" makes create-mode writes exclusive: a file that appears between the
+  // policy existence check and the write (TOCTOU) fails with EEXIST instead
+  // of silently overwriting a create-only queue item, trace, or request.
+  else await writeFile(path, ensureTrailingNewline(input.content), { encoding: "utf8", flag: mode === "create" ? "wx" : "w" });
   await emitPolicyEvent(input.onEvent, info, {
     type: info.pathClass === "kb_discovery" || info.pathClass === "kb_handoff_inbound" ? "kb.queue_create" : "kb.write_allowed",
     actor: input.actor,
@@ -334,7 +337,7 @@ export async function writeKnowledgeJson(input: WriteKnowledgeJsonInput): Promis
   await mkdir(dirname(path), { recursive: true });
   const content = JSON.stringify(input.value, null, 2) + "\n";
   if (mode === "append") await writeAppend(path, content);
-  else await writeFile(path, content, "utf8");
+  else await writeFile(path, content, { encoding: "utf8", flag: mode === "create" ? "wx" : "w" });
   await emitPolicyEvent(input.onEvent, info, {
     type: info.pathClass === "kb_discovery" || info.pathClass === "kb_handoff_inbound" ? "kb.queue_create" : "kb.write_allowed",
     actor: input.actor,

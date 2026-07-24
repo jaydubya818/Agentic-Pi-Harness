@@ -27,6 +27,31 @@ afterEach(async () => {
 });
 
 describe("KB access policy V1", () => {
+  it("create-mode writes are exclusive even when the existence check raced", async () => {
+    const kbRoot = await makeTempDir("pi-kb-exclusive-");
+    const wikiRoot = await makeTempDir("pi-wiki-exclusive-");
+    const roots = { agenticKbRoot: kbRoot, llmWikiRoot: wikiRoot };
+    const queueItem = join(kbRoot, "queues/discovery/item-1.json");
+
+    // Simulate a racing writer landing the file after the caller decided on
+    // create mode but before the write hits the filesystem: an explicit
+    // create-mode write against an existing file must not clobber it.
+    await writeKnowledgeJson({ actor: "hermes", path: queueItem, value: { first: true }, roots });
+    await expect(
+      writeKnowledgeJson({ actor: "hermes", path: queueItem, value: { second: true }, mode: "create", roots }),
+    ).rejects.toThrow();
+    expect(JSON.parse(await readFile(queueItem, "utf8"))).toEqual({ first: true });
+
+    // Same guarantee at the filesystem layer (O_EXCL), where the policy layer
+    // would otherwise allow pi to overwrite: create means create.
+    const piNote = join(kbRoot, "staging/normalized/note.json");
+    await writeKnowledgeJson({ actor: "pi", path: piNote, value: { first: true }, mode: "create", roots });
+    await expect(
+      writeKnowledgeJson({ actor: "pi", path: piNote, value: { second: true }, mode: "create", roots }),
+    ).rejects.toThrow(/EEXIST/);
+    expect(JSON.parse(await readFile(piNote, "utf8"))).toEqual({ first: true });
+  });
+
   it("allows Hermes writes in approved mission output zones", async () => {
     const roots = await createRoots();
     const runRoot = join(roots.agenticKbRoot, "missions", "2026", "mission-alpha", "runs", "run-1");
