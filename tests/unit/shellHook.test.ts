@@ -49,6 +49,31 @@ process.stdin.on('end', () => {
     expect(res.outcome).toBe("continue");
   });
 
+  it("SIGKILLs a hung hook and its descendants at the hard timeout", async () => {
+    const script = `
+const { spawn } = require('child_process');
+const c = spawn('sleep', ['30']);
+process.stderr.write('pid=' + c.pid + '\\n');
+process.stdin.resume();
+setTimeout(() => {}, 30000);`;
+    let caught: unknown;
+    try {
+      await runShellHook({ command: ["node", "-e", script], hardTimeoutMs: 500 }, ctx);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(PiHarnessError);
+    expect((caught as PiHarnessError).message).toContain("SIGKILLed");
+
+    // The grandchild must have died with the process group.
+    const stderr = String((caught as PiHarnessError).context.stderr ?? "");
+    const match = /pid=(\d+)/.exec(stderr);
+    expect(match).not.toBeNull();
+    const grandchildPid = Number(match![1]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(() => process.kill(grandchildPid, 0)).toThrow();
+  });
+
   it("rejects on non-zero exit with E_HOOK_SHELL", async () => {
     await expect(
       runShellHook({ command: ["node", "-e", "process.exit(2)"], hardTimeoutMs: 5000 }, ctx),

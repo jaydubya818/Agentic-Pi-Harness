@@ -34,13 +34,16 @@ export function runShellHook(spec: ShellHookSpec, ctx: HookContext): Promise<Hoo
     const child = spawn(cmd, args, {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...(spec.env ?? {}) },
+      // Own process group (POSIX) so the hard timeout can SIGKILL the whole
+      // tree, not just the direct child.
+      detached: process.platform !== "win32",
     });
     let stdout = "";
     let stderr = "";
     let killed = false;
     const kill = setTimeout(() => {
       killed = true;
-      try { child.kill("SIGKILL"); } catch { /* ignore */ }
+      killHookTree(child);
     }, hardTimeout);
     child.stdout.on("data", (d) => { stdout += d.toString("utf8"); });
     child.stderr.on("data", (d) => { stderr += d.toString("utf8"); });
@@ -77,4 +80,18 @@ export function runShellHook(spec: ShellHookSpec, ctx: HookContext): Promise<Hoo
     }));
     child.stdin.end();
   });
+}
+
+/**
+ * SIGKILL the hook's whole process group so hung descendants die with it.
+ * Falls back to killing the direct child (Windows, or if the group is gone).
+ */
+function killHookTree(child: ReturnType<typeof spawn>): void {
+  if (process.platform !== "win32" && child.pid) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch { /* fall through to direct kill */ }
+  }
+  try { child.kill("SIGKILL"); } catch { /* ignore */ }
 }
