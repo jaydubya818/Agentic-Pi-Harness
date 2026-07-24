@@ -5,6 +5,12 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 ## [Unreleased]
 
 ### Fixed
+- Hook timeout races (`hooks/dispatcher.ts`, `hooks/mediation.ts`) clear the losing timer instead of keeping the event loop alive for up to `timeoutMs` per hook call, and a hook that rejects after losing the race no longer surfaces as an unhandled rejection.
+- Worker-mode `allowedWritePathPrefixes` matching is now normalized and boundary-aware: sibling directories sharing a string prefix (`sandbox-evil/` vs `sandbox`) and traversal escapes (`sandbox/../src/x`) are denied.
+- Client-supplied `execution_id` values are preflight-denied by `/execute` unless they are safe single path segments; the bridge state store also refuses unsafe session/execution segments, closing a path traversal out of the state root.
+- One corrupt line in `preflight-denials.jsonl` (e.g. a crash mid-append) no longer makes `loadPreflightDenials` silently return an empty list; corrupt lines are skipped individually.
+- Create-mode knowledge writes open with `O_EXCL` (`wx`), so a file that appears between the policy existence check and the write fails with `EEXIST` instead of silently overwriting create-only queue items, traces, or immutable requests.
+
 - Trace files can no longer be truncated by an explicit create-mode write to an existing append-only trace path; the write now fails closed with `kb.trace_overwrite_denied`.
 - Knowledge-root containment no longer misclassifies legal dot-dot-prefixed names (e.g. `..weird.md`) directly under a root as outside it.
 - Stuck-run detection compares against the last observed worker progress/output event instead of the supervisor's own emitted heartbeats. Previously a hung worker was never flagged with heartbeats enabled (the default), and every run older than `stuckTimeoutMs` was killed with them disabled even while actively streaming.
@@ -26,6 +32,11 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 - `pi-harness replay` parses the tape once instead of twice (new `verifyTapeRecords` helper).
 - `npm run lint` now has a repo-local TypeScript ESLint config instead of failing with missing-config / unmatched-pattern errors.
 - `npm test` no longer runs the hash-chain microbench by default; the perf bench moved to opt-in `npm run bench`.
+
+### Performance
+- `compactHistory` indexes compactable segments by event index (Map lookup) instead of a per-event linear scan.
+- The query loop builds sofie tool evidence from two lookup maps instead of scanning the full event and effect arrays per policy decision.
+- `read_events` finds the last event for an execution with a reverse index walk instead of copying and reversing the whole session event array on every wake-up.
 
 ### Changed
 - Hash-chain bench ceilings are now explicitly env-configurable via `PI_HASHCHAIN_BENCH_CEILING_MS`, with defaults widened to `12ms` local / `16ms` CI for slower storage/runner variance.
