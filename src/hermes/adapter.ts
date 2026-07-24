@@ -296,7 +296,7 @@ export class HermesAdapter {
         if (executionId && isTerminalEventType(event.type)) return;
       }
       const lastEvent = executionId
-        ? [...session.events].reverse().find((event) => event.execution_id === executionId)
+        ? findLastEventForExecution(session.events, executionId)
         : session.events[session.events.length - 1];
       if (sawExecution && !session.active && isTerminalEventType(lastEvent?.type)) return;
       await new Promise<void>((resolvePromise) => {
@@ -556,6 +556,13 @@ export class HermesAdapter {
     if (!session) throw new Error(`unknown Hermes session: ${sessionId}`);
     return session;
   }
+}
+
+function findLastEventForExecution(events: HermesTaskEvent[], executionId: string): HermesTaskEvent | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    if (events[index].execution_id === executionId) return events[index];
+  }
+  return undefined;
 }
 
 function isTerminalEventType(type: string | undefined): boolean {
