@@ -120,16 +120,27 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
     let run: any = null;
     const deadline = Date.now() + ((input.timeoutSeconds ?? 900) * 1000) + 5000;
     while (Date.now() < deadline) {
-      const runResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}`, { headers: authHeaders });
-      run = await runResponse.json();
-      const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(run.status);
-      if (terminal && (run.worker_result || run.result)) break;
+      try {
+        const runResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}`, { headers: authHeaders });
+        if (runResponse.ok) {
+          run = await runResponse.json();
+          const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(run.status);
+          if (terminal && (run.worker_result || run.result)) break;
+        }
+      } catch {
+        // A single flaky poll (connection reset, non-JSON error body) must
+        // not abort a governed run that is still executing; keep polling.
+      }
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
     }
 
-    const eventsResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}/events?view=raw`, { headers: authHeaders });
-    const events = await eventsResponse.json() as Array<Record<string, unknown>>;
-    if (events.length > 0) await writeFile(eventLogPath, events.map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
+    try {
+      const eventsResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}/events?view=raw`, { headers: authHeaders });
+      const events = eventsResponse.ok ? await eventsResponse.json() as Array<Record<string, unknown>> : [];
+      if (Array.isArray(events) && events.length > 0) await writeFile(eventLogPath, events.map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
+    } catch {
+      // Event capture is best-effort; result.json is the source of truth.
+    }
 
     const result = (run?.worker_result ?? run?.result) as HermesTaskResult | null;
     if (!result) throw new Error(`bridge run did not produce a result for execution ${accepted.execution_id}`);
