@@ -37,7 +37,15 @@ export interface HermesAdapterOptions {
   logger?: Logger;
   ptyCols?: number;
   ptyRows?: number;
+  /**
+   * Cap on the raw worker output retained in memory for end-of-run parsing
+   * (structured result block + session footer, both emitted last). The full
+   * stream is always appended to hermes.raw.log on disk regardless.
+   */
+  maxRetainedOutputChars?: number;
 }
+
+const DEFAULT_MAX_RETAINED_OUTPUT_CHARS = 8 * 1024 * 1024;
 
 interface ActiveExecution {
   request: HermesTaskRequest;
@@ -88,6 +96,7 @@ export class HermesAdapter {
   private readonly logger: Logger;
   private readonly ptyCols: number;
   private readonly ptyRows: number;
+  private readonly maxRetainedOutputChars: number;
 
   constructor(options: HermesAdapterOptions = {}) {
     this.command = options.command ?? detectHermesBinaryPath(process.env) ?? process.env.HERMES_COMMAND ?? "hermes";
@@ -98,6 +107,7 @@ export class HermesAdapter {
     this.logger = options.logger ?? new NoopLogger();
     this.ptyCols = options.ptyCols ?? 120;
     this.ptyRows = options.ptyRows ?? 30;
+    this.maxRetainedOutputChars = options.maxRetainedOutputChars ?? DEFAULT_MAX_RETAINED_OUTPUT_CHARS;
   }
 
   async start_session(workdir: string, options: StartHermesSessionOptions = {}): Promise<HermesAdapterSession> {
@@ -415,6 +425,12 @@ export class HermesAdapter {
 
   private async handleOutput(session: StoredSession, active: ActiveExecution, chunk: string, stream: string): Promise<void> {
     active.rawOutput += chunk;
+    if (active.rawOutput.length > this.maxRetainedOutputChars) {
+      // Keep only the tail in memory: a chatty long-running worker must not
+      // grow the harness heap without bound, and everything parsed at exit
+      // (structured result block, session footer) arrives at the end.
+      active.rawOutput = active.rawOutput.slice(-this.maxRetainedOutputChars);
+    }
     await appendFile(active.rawLogPath, chunk, "utf8");
 
     const normalized = chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");

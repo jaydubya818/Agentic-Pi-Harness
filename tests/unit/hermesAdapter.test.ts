@@ -17,12 +17,13 @@ afterEach(async () => {
   await Promise.all(createdPaths.splice(0).reverse().map((path) => rm(path, { recursive: true, force: true })));
 });
 
-async function createAdapter() {
+async function createAdapter(options: { maxRetainedOutputChars?: number } = {}) {
   return new HermesAdapter({
     command: process.execPath,
     commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
     stateRoot: await makeTempDir("pi-hermes-state-"),
     preferTransport: "subprocess",
+    ...options,
   });
 }
 
@@ -91,6 +92,35 @@ describe("HermesAdapter", () => {
     const result = await adapter.collect_result(session.session_id);
     expect(result.status).toBe("interrupted");
     expect(result.summary).toContain("interrupted");
+  }, 15000);
+
+  it("still parses the structured result when output exceeds the retention cap", async () => {
+    const workdir = await makeTempDir("pi-hermes-work-");
+    const outputDir = await makeTempDir("pi-hermes-out-");
+    const adapter = await createAdapter({ maxRetainedOutputChars: 4096 });
+    const session = await adapter.start_session(workdir);
+
+    const request = HermesTaskRequestSchema.parse({
+      request_id: "req_test_noisy",
+      session_id: session.session_id,
+      objective: "__NOISY__ flood stdout, then emit the structured result.",
+      workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["read", "write"],
+      timeout_seconds: 30,
+      output_dir: outputDir,
+      metadata: { mission_id: "mission-4", run_id: "run-4", step_id: "step-4" },
+    });
+
+    await adapter.send_task(session.session_id, request);
+    const result = await adapter.collect_result(session.session_id);
+
+    expect(result.status).toBe("completed");
+    expect(result.structured_output).toBe(true);
+    expect(result.summary).toContain("Fake Hermes completed successfully");
+    // The full stream still lands on disk even though memory retention is capped.
+    const rawLog = await readFile(join(outputDir, ".pi-hermes", "hermes.raw.log"), "utf8");
+    expect(rawLog.length).toBeGreaterThan(100000);
   }, 15000);
 
   it("cancel force-kill timer does not kill a subsequent execution", async () => {
