@@ -94,6 +94,23 @@ describe("HermesAdapter", () => {
     expect(result.summary).toContain("interrupted");
   }, 15000);
 
+  it("read_events terminates instead of hanging when the session is closed", async () => {
+    const workdir = await makeTempDir("pi-hermes-work-");
+    const adapter = await createAdapter();
+    const session = await adapter.start_session(workdir);
+
+    const iterator = adapter.read_events(session.session_id);
+    const pendingNext = iterator.next();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    await adapter.close_session(session.session_id);
+
+    const outcome = await Promise.race([
+      pendingNext.then((result) => (result.done ? "done" : "event")),
+      new Promise((resolvePromise) => setTimeout(() => resolvePromise("hung"), 2000)),
+    ]);
+    expect(outcome).toBe("done");
+  }, 15000);
+
   it("still parses the structured result when output exceeds the retention cap", async () => {
     const workdir = await makeTempDir("pi-hermes-work-");
     const outputDir = await makeTempDir("pi-hermes-out-");
