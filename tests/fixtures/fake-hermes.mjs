@@ -14,6 +14,7 @@ const outputDirMatch = query.match(/- Output dir for artifacts: (.+)/);
 const outputDir = outputDirMatch ? outputDirMatch[1].trim() : null;
 const slow = query.includes("__SLOW__");
 const fail = query.includes("__FAIL__");
+const noisy = query.includes("__NOISY__");
 
 async function finish(code = 0, error = null) {
   let artifacts = [];
@@ -56,6 +57,13 @@ process.on("SIGTERM", async () => {
 (async () => {
   if (fail) {
     await finish(3, "fake hermes failure");
+    return;
+  }
+
+  if (noisy) {
+    const filler = "noisy fake hermes filler line 0123456789".repeat(4);
+    for (let i = 0; i < 1000; i++) console.log(`${i} ${filler}`);
+    await finish(0, null);
     return;
   }
 
