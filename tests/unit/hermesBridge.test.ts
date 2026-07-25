@@ -420,4 +420,48 @@ describe("HermesBridgeServer", () => {
       await server.stop();
     }
   }, 15000);
+
+  it("rejects malformed control-endpoint bodies with 400", async () => {
+    const stateRoot = await makeTempDir("pi-hermes-bridge-badbody-state-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+    const post = (path: string, body: unknown) => fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    try {
+      const missingWorkdir = await post("/sessions", {});
+      expect(missingWorkdir.status).toBe(400);
+      expect(((await missingWorkdir.json()) as { error: string }).error).toContain("workdir");
+
+      const emptyWorkdir = await post("/sessions", { workdir: "" });
+      expect(emptyWorkdir.status).toBe(400);
+
+      const missingExecutionId = await post("/interrupt", {});
+      expect(missingExecutionId.status).toBe(400);
+      expect(((await missingExecutionId.json()) as { error: string }).error).toContain("execution_id");
+
+      const numericExecutionId = await post("/cancel", { execution_id: 123 });
+      expect(numericExecutionId.status).toBe(400);
+    } finally {
+      await server.stop();
+    }
+  }, 15000);
+
 });

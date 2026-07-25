@@ -196,6 +196,9 @@ export class HermesBridgeServer {
 
     if (method === "POST" && path === "/sessions") {
       const body = await readJson<StartSessionBody>(req);
+      if (typeof body.workdir !== "string" || body.workdir.length === 0) {
+        throw new BridgeRequestError(400, "workdir must be a non-empty string");
+      }
       const session = await this.adapter.start_session(body.workdir, {
         env: body.env,
         profile: body.profile,
@@ -261,6 +264,7 @@ export class HermesBridgeServer {
 
     if (method === "POST" && path === "/interrupt") {
       const body = await readJson<{ execution_id: string }>(req);
+      assertExecutionIdBody(body);
       const run = this.runs.get(body.execution_id);
       if (!run) {
         json(res, 404, { error: `unknown execution_id: ${body.execution_id}` });
@@ -273,6 +277,7 @@ export class HermesBridgeServer {
 
     if (method === "POST" && path === "/cancel") {
       const body = await readJson<{ execution_id: string }>(req);
+      assertExecutionIdBody(body);
       const run = this.runs.get(body.execution_id);
       if (!run) {
         json(res, 404, { error: `unknown execution_id: ${body.execution_id}` });
@@ -1064,6 +1069,12 @@ function writeSseNamedEvent(res: ServerResponse, name: string, data: string, id?
 }
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
+
+function assertExecutionIdBody(body: { execution_id?: unknown }): void {
+  if (typeof body.execution_id !== "string" || body.execution_id.length === 0) {
+    throw new BridgeRequestError(400, "execution_id must be a non-empty string");
+  }
+}
 
 class BridgeRequestError extends Error {
   constructor(readonly statusCode: number, message: string) {
