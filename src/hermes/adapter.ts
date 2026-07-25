@@ -253,6 +253,7 @@ export class HermesAdapter {
           timeoutSeconds: request.timeout_seconds,
         });
         this.terminateTransport(active, "SIGTERM");
+        if (active.forceKillHandle) clearTimeout(active.forceKillHandle);
         active.forceKillHandle = setTimeout(() => {
           this.terminateTransport(active, "SIGKILL");
         }, 5000);
@@ -314,11 +315,16 @@ export class HermesAdapter {
 
   async cancel(sessionId: string): Promise<void> {
     const session = this.requireSession(sessionId);
-    if (!session.active) return;
-    session.active.intent = "cancel";
-    this.terminateTransport(session.active, "SIGTERM");
-    session.active.forceKillHandle = setTimeout(() => {
-      this.terminateTransport(session.active, "SIGKILL");
+    // Capture the execution being cancelled: the force-kill timer must not
+    // re-read session.active when it fires, or it could SIGKILL a subsequent
+    // execution that started after this one exited.
+    const active = session.active;
+    if (!active) return;
+    active.intent = "cancel";
+    this.terminateTransport(active, "SIGTERM");
+    if (active.forceKillHandle) clearTimeout(active.forceKillHandle);
+    active.forceKillHandle = setTimeout(() => {
+      this.terminateTransport(active, "SIGKILL");
     }, 3000);
   }
 

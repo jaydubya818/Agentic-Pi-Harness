@@ -92,4 +92,48 @@ describe("HermesAdapter", () => {
     expect(result.status).toBe("interrupted");
     expect(result.summary).toContain("interrupted");
   }, 15000);
+
+  it("cancel force-kill timer does not kill a subsequent execution", async () => {
+    const workdir = await makeTempDir("pi-hermes-work-");
+    const outputDir = await makeTempDir("pi-hermes-out-");
+    const adapter = await createAdapter();
+    const session = await adapter.start_session(workdir);
+
+    const makeRequest = (requestId: string) => HermesTaskRequestSchema.parse({
+      request_id: requestId,
+      session_id: session.session_id,
+      objective: "__SLOW__ keep working until cancelled.",
+      workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["read"],
+      timeout_seconds: 30,
+      output_dir: outputDir,
+      metadata: { mission_id: "mission-3", run_id: "run-3", step_id: "step-3" },
+    });
+
+    await adapter.send_task(session.session_id, makeRequest("req_test_cancel_1"));
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
+    // Double-cancel: the second call used to overwrite forceKillHandle,
+    // orphaning the first force-kill timer so exit cleanup never cleared it.
+    await adapter.cancel(session.session_id);
+    await adapter.cancel(session.session_id);
+    const first = await adapter.collect_result(session.session_id);
+    expect(first.status).toBe("cancelled");
+
+    // Start a second slow execution immediately, then wait past the 3s
+    // force-kill window of the first cancel. The orphaned timer used to
+    // re-read session.active and SIGKILL this new execution.
+    await adapter.send_task(session.session_id, makeRequest("req_test_cancel_2"));
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 3500));
+
+    const second = adapter.collect_result(session.session_id);
+    let secondSettled = false;
+    void second.then(() => { secondSettled = true; }, () => { secondSettled = true; });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    expect(secondSettled).toBe(false);
+
+    await adapter.cancel(session.session_id);
+    const result = await second;
+    expect(result.status).toBe("cancelled");
+  }, 15000);
 });
