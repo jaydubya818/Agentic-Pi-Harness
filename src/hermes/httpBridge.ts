@@ -667,16 +667,16 @@ export class HermesBridgeServer {
     const placeholderManifestItem = await buildPlaceholderArtifact("art_manifest_1", "manifest", "primary_result", manifestPath, "pi", "Artifact manifest");
     let artifactManifest = [...manifestItems, placeholderResultItem, placeholderManifestItem];
 
-    let resultEnvelope = buildResultEnvelope(task, run, adapterResult, artifactManifest, startedAt, now.toISOString(), failureClass, errorMessage);
+    let resultEnvelope = buildResultEnvelope(task, run, adapterResult, artifactManifest, startedAt, now.toISOString(), failureClass, errorMessage, this.stateRoot);
     await writeJsonArtifact(resultPath, resultEnvelope);
     artifactManifest = await refreshGeneratedArtifacts(artifactManifest, resultPath, manifestPath);
     await writeJsonArtifact(manifestPath, artifactManifest);
     artifactManifest = await refreshGeneratedArtifacts(artifactManifest, resultPath, manifestPath);
-    resultEnvelope = buildResultEnvelope(task, run, adapterResult, artifactManifest, startedAt, new Date().toISOString(), failureClass, errorMessage);
+    resultEnvelope = buildResultEnvelope(task, run, adapterResult, artifactManifest, startedAt, new Date().toISOString(), failureClass, errorMessage, this.stateRoot);
     await writeJsonArtifact(resultPath, resultEnvelope);
     artifactManifest = await refreshGeneratedArtifacts(artifactManifest, resultPath, manifestPath);
     await writeJsonArtifact(manifestPath, artifactManifest);
-    resultEnvelope = buildResultEnvelope(task, run, adapterResult, artifactManifest, startedAt, new Date().toISOString(), failureClass, errorMessage);
+    resultEnvelope = buildResultEnvelope(task, run, adapterResult, artifactManifest, startedAt, new Date().toISOString(), failureClass, errorMessage, this.stateRoot);
     await writeJsonArtifact(resultPath, resultEnvelope);
 
     for (const item of artifactManifest) {
@@ -1233,6 +1233,7 @@ function buildResultEnvelope(
   endedAt: string,
   failureClass: PiHermesFailureClass | null,
   errorMessage: string | null,
+  bridgeStateRoot: string,
 ): PiHermesResultEnvelopeV2 {
   return PiHermesResultEnvelopeV2Schema.parse({
     schema_version: "2.0",
@@ -1252,7 +1253,7 @@ function buildResultEnvelope(
     },
     artifact_manifest: artifactManifest,
     logs_ref: {
-      bridge_state_root: join(homedir(), ".pi", "hermes-bridge-state"),
+      bridge_state_root: bridgeStateRoot,
       execution_id: task.execution_id,
     },
     error: failureClass ? { message: errorMessage } : null,
