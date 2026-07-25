@@ -12,8 +12,9 @@ This repo started as a deterministic Tier A harness proof. It now also contains 
 
 Current implemented direction:
 
-- **Pi** as supervisor / orchestrator
-- **Hermes** as a governed worker
+- **Hermes / Jay-facing systems** as the visible control surface for mission routing and synthesis
+- **Pi** as execution-level supervisor / governor for bounded worker runtimes
+- **Hermes worker processes** as governed workers when routed through the bridge
 - **Bridge-routed governed execution**
 - **Versioned execution contract**
 - **Persistent run state**
@@ -32,6 +33,7 @@ Relevant docs:
 - [`KB_ACCESS_POLICY_V1.md`](KB_ACCESS_POLICY_V1.md)
 - [`GOVERNED_EXECUTION_MODEL_V1.md`](GOVERNED_EXECUTION_MODEL_V1.md)
 - [`docs/HERMES-ADAPTER.md`](docs/HERMES-ADAPTER.md)
+- [`docs/WORKDAY-FACTORY-RUNTIME-ROLE.md`](docs/WORKDAY-FACTORY-RUNTIME-ROLE.md)
 
 ---
 
@@ -39,8 +41,9 @@ Relevant docs:
 
 ### Roles
 
-- **Pi**: supervisor, governor, promoter of canonical truth
-- **Hermes**: governed worker
+- **Hermes / Jay-facing systems**: visible control surface for mission routing, synthesis, and operator interaction
+- **Pi**: execution-level supervisor, governor, and promoter of canonical truth for bounded runtime lanes
+- **Hermes worker processes**: governed workers when routed through the bridge
 - **Bridge**: the required control-plane boundary for governed execution
 
 ### Knowledge model
