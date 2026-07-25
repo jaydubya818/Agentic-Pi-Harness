@@ -77,6 +77,7 @@ interface StoredSession {
   waiters: Array<() => void>;
   active: ActiveExecution | null;
   lastResult: HermesTaskResult | null;
+  closed: boolean;
 }
 
 export interface StartHermesSessionOptions {
@@ -134,6 +135,7 @@ export class HermesAdapter {
       waiters: [],
       active: null,
       lastResult: null,
+      closed: false,
     };
 
     this.sessions.set(record.session_id, stored);
@@ -310,6 +312,9 @@ export class HermesAdapter {
         ? findLastEventForExecution(session.events, executionId)
         : session.events[session.events.length - 1];
       if (sawExecution && !session.active && isTerminalEventType(lastEvent?.type)) return;
+      // A closed session will never emit again; without this check a pending
+      // iterator would park on a waiter that nothing ever wakes.
+      if (session.closed) return;
       await new Promise<void>((resolvePromise) => {
         session.waiters.push(resolvePromise);
       });
@@ -356,6 +361,7 @@ export class HermesAdapter {
       }
     }
     session.record.status = "closed";
+    session.closed = true;
     await safeWriteJson(join(session.record.runtime_dir, "session.json"), session.record);
     const waiters = session.waiters.splice(0, session.waiters.length);
     for (const waiter of waiters) waiter();
