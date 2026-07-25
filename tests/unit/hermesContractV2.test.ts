@@ -39,6 +39,7 @@ describe("PI_HERMES_CONTRACT_V2 golden mission", () => {
       expect(run.failure_class).toBeNull();
       expect(run.result.status).toBe("succeeded");
       expect(run.result.schema_version).toBe("2.0");
+      expect(run.result.logs_ref.bridge_state_root).toBe(resolve(stateRoot));
       expect(run.result_envelope.schema_version).toBe("2.0");
       expect(run.task_envelope.schema_version).toBe("2.0");
       expect(run.result.artifact_manifest).toHaveLength(4);
