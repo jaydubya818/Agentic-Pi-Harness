@@ -92,6 +92,7 @@ export class HermesBridgeServer {
   private readonly activeWatchers = new Set<Promise<void>>();
   private readonly subscribers = new Map<string, Set<SseSubscriber>>();
   private readonly heartbeatControllers = new Map<string, ActiveHeartbeatController>();
+  private readonly nextV2EventIds = new WeakMap<HermesBridgeRunRecord, number>();
 
   constructor(options: HermesBridgeServerOptions = {}) {
     this.host = options.host ?? "127.0.0.1";
@@ -785,8 +786,10 @@ export class HermesBridgeServer {
   ): Promise<void> {
     const task = run.v2Task;
     if (!task) return;
+    const nextEventId = this.nextV2EventIds.get(run) ?? countStructuredV2Events(run.events) + 1;
+    this.nextV2EventIds.set(run, nextEventId + 1);
     const event = PiHermesStructuredEventV2Schema.parse({
-      event_id: getPublicEvents(run).length + 1,
+      event_id: nextEventId,
       timestamp: new Date().toISOString(),
       schema_version: "2.0",
       event_type: input.event_type,
@@ -882,7 +885,7 @@ export class HermesBridgeServer {
 
   private streamRunEvents(req: IncomingMessage, res: ServerResponse, run: HermesBridgeRunRecord): void {
     const lastEventId = parseLastEventId(req);
-    const replayEvents = getReplayEvents(run, lastEventId);
+    const replayEvents = getReplayEventsWithIds(run, lastEventId);
 
     res.statusCode = 200;
     res.setHeader("content-type", "text/event-stream; charset=utf-8");
@@ -891,8 +894,8 @@ export class HermesBridgeServer {
     res.setHeader("x-accel-buffering", "no");
     res.flushHeaders?.();
 
-    for (const event of replayEvents) {
-      writeSseEvent(res, getBridgeEventId(run, event), event);
+    for (const { id, event } of replayEvents) {
+      writeSseEvent(res, id, event);
     }
 
     if (isTerminalRunRecord(run)) {
@@ -939,7 +942,9 @@ export class HermesBridgeServer {
   private broadcastEvent(run: HermesBridgeRunRecord, event: BridgeEventRecord): void {
     const subscriberSet = this.subscribers.get(run.accepted.execution_id);
     if (!subscriberSet || subscriberSet.size === 0) return;
-    const eventId = getBridgeEventId(run, event);
+    // v2 events carry their id; legacy events are always broadcast right
+    // after being pushed, so their id is the current event count.
+    const eventId = isStructuredV2Event(event) ? event.event_id : run.events.length;
     for (const subscriber of Array.from(subscriberSet)) {
       subscriber.send(eventId, event);
     }
@@ -1128,15 +1133,20 @@ function getPublicEvents(run: HermesBridgeRunRecord): BridgeEventRecord[] {
   return run.v2Task ? run.events.filter(isStructuredV2Event) : run.events;
 }
 
-function getReplayEvents(run: HermesBridgeRunRecord, lastEventId: number): BridgeEventRecord[] {
-  const publicEvents = getPublicEvents(run);
-  if (!run.v2Task) return publicEvents.slice(Math.max(0, lastEventId));
-  return publicEvents.filter((event) => isStructuredV2Event(event) && event.event_id > lastEventId);
+function getReplayEventsWithIds(run: HermesBridgeRunRecord, lastEventId: number): Array<{ id: number; event: BridgeEventRecord }> {
+  if (!run.v2Task) {
+    const skipped = Math.max(0, lastEventId);
+    return run.events.slice(skipped).map((event, index) => ({ id: skipped + index + 1, event }));
+  }
+  return run.events
+    .filter((event): event is PiHermesStructuredEventV2 => isStructuredV2Event(event) && event.event_id > lastEventId)
+    .map((event) => ({ id: event.event_id, event }));
 }
 
-function getBridgeEventId(run: HermesBridgeRunRecord, event: BridgeEventRecord): number {
-  if (run.v2Task && isStructuredV2Event(event)) return event.event_id;
-  return Math.max(1, getPublicEvents(run).indexOf(event) + 1);
+function countStructuredV2Events(events: BridgeEventRecord[]): number {
+  let count = 0;
+  for (const event of events) if (isStructuredV2Event(event)) count += 1;
+  return count;
 }
 
 function getRunState(run: HermesBridgeRunRecord): string {
