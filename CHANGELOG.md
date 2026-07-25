@@ -5,6 +5,11 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 ## [Unreleased]
 
 ### Fixed
+- A stale cancel force-kill timer could SIGKILL the *next* execution on the same session: the timer re-read `session.active` when it fired, and a double cancel (or the timeout path) orphaned the previous timer so exit cleanup never cleared it. The timer now captures the execution being cancelled and pending force-kill timers are cleared before a new one is armed.
+- `read_events` iterators no longer hang forever when their session is closed mid-iteration; closed sessions set a flag that drained generators observe instead of re-parking on a waiter nothing can wake.
+- Raw worker output retained in memory for end-of-run parsing is capped at an 8M-char tail (configurable via `maxRetainedOutputChars`); the full stream still lands in `hermes.raw.log`. Previously a chatty long-running worker grew the harness heap without bound.
+- `POST /sessions` with a missing or empty `workdir` returns 400 instead of reaching `start_session(undefined)` and surfacing as an unhandled 500; `/interrupt` and `/cancel` now reject non-string `execution_id` bodies with 400.
+- v2 result envelopes' `logs_ref.bridge_state_root` pointed at the hardcoded default `~/.pi/hermes-bridge-state` even when the bridge ran with a custom `stateRoot`; the configured root is now threaded through.
 - Sub-agent slugs are allowlisted before they become filesystem path segments and `pi/<slug>-<ts>` branch names; traversal (`../evil`), nested (`a/b`), and git-ref-syntax slugs are rejected, and the worktree base check is boundary-safe instead of a raw `startsWith`.
 - A missing or non-executable Hermes command no longer crashes the harness with an unhandled `'error'` event from the spawned child; both stdio transports surface spawn failures as a single exit event with code 127.
 - The shell hook hard timeout now SIGKILLs the hook's whole process group (POSIX), so hung descendants die with the hook as the contract comment always promised; shell hook stdout/stderr capture is bounded at 4MB per stream.
@@ -40,6 +45,7 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 - `npm test` no longer runs the hash-chain microbench by default; the perf bench moved to opt-in `npm run bench`.
 
 ### Performance
+- Bridge event ids come from a per-run counter instead of filtering or indexOf-scanning the whole event array per emit/broadcast, which made event emission O(n^2) over a run's lifetime.
 - The bridge client backs off run polling from 50ms to a 500ms ceiling instead of hammering `/runs` at ~20 req/s for the whole run.
 - `compactHistory` indexes compactable segments by event index (Map lookup) instead of a per-event linear scan.
 - The query loop builds sofie tool evidence from two lookup maps instead of scanning the full event and effect arrays per policy decision.
