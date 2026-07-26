@@ -44,6 +44,29 @@ describe("PolicyEngine", () => {
     expect(d.winningRuleId).toBe("allow-tests-write");
   });
 
+  it("does not let pathPrefix leak onto sibling paths sharing leading characters", () => {
+    const prefixDoc: PolicyDoc = {
+      schemaVersion: 1,
+      defaultAction: "deny",
+      rules: [
+        { id: "allow-tests-write", action: "approve", match: { tool: "write_file", pathPrefix: "tests" } },
+      ],
+    };
+    const prefixEngine = new PolicyEngine(prefixDoc);
+    const decide = (path: string) => prefixEngine.decide({
+      toolCallId: "p",
+      toolName: "write_file",
+      mode: "assist",
+      input: { path, content: "x" },
+      at: "2026-04-09T00:00:00Z",
+    }).result;
+
+    expect(decide("tests/math.test.ts")).toBe("approve");
+    expect(decide("tests")).toBe("approve");
+    expect(decide("tests-evil/math.test.ts")).toBe("deny");
+    expect(decide("tests.bak")).toBe("deny");
+  });
+
   it("falls through to explicit default deny", () => {
     const d = eng.decide({
       toolCallId: "c",
