@@ -143,7 +143,7 @@ function spawnScriptPtyTransport(command: string, input: SpawnHermesTransportInp
   if (!scriptPath) return null;
 
   try {
-    const child = spawnChildProcess(scriptPath, ["-q", "/dev/null", command, ...input.args], {
+    const child = spawnChildProcess(scriptPath, buildScriptPtyArgs(command, input.args, process.platform), {
       cwd: input.cwd,
       env: input.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -153,6 +153,25 @@ function spawnScriptPtyTransport(command: string, input: SpawnHermesTransportInp
   } catch {
     return null;
   }
+}
+
+/**
+ * BSD script (macOS) and util-linux script (Linux) disagree on arguments.
+ * BSD: `script -q /dev/null command arg...` runs the command directly.
+ * util-linux ignores extra positional arguments, so the BSD form silently
+ * spawns an interactive shell instead of the worker command. Linux needs
+ * `script -qefc '<command>' /dev/null` (-e propagates the command's exit
+ * code, -f flushes output as it streams).
+ */
+function buildScriptPtyArgs(command: string, args: string[], platform: NodeJS.Platform): string[] {
+  if (platform === "linux") {
+    return ["-qefc", [command, ...args].map(quoteForShell).join(" "), "/dev/null"];
+  }
+  return ["-q", "/dev/null", command, ...args];
+}
+
+function quoteForShell(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function resolveExecutable(command: string, env: NodeJS.ProcessEnv): string | null {
@@ -234,4 +253,4 @@ function killChild(child: ChildProcess, signal?: string): void {
   child.kill(normalized);
 }
 
-export const __testables = { resolveExecutable };
+export const __testables = { resolveExecutable, buildScriptPtyArgs };
