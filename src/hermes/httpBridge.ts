@@ -146,6 +146,18 @@ export class HermesBridgeServer {
     if (!this.server) return;
     for (const controller of this.heartbeatControllers.values()) controller.stop();
     this.heartbeatControllers.clear();
+    // Cancel in-flight executions before draining watchers. stop() awaits
+    // active watchers below; without cancellation a long-running worker
+    // (default budget 900s) keeps shutdown hanging until operators kill -9
+    // the bridge and orphan the worker process anyway.
+    for (const run of this.runs.values()) {
+      if (isTerminalRunRecord(run)) continue;
+      try {
+        await this.adapter.cancel(run.session.session_id, run.accepted.execution_id);
+      } catch {
+        // session may already be gone; watcher settlement below still holds
+      }
+    }
     for (const subscriberSet of this.subscribers.values()) {
       for (const subscriber of subscriberSet) subscriber.close();
     }
