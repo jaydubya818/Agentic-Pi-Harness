@@ -535,6 +535,63 @@ describe("HermesBridgeServer", () => {
     }
   }, 15000);
 
+  it("stop() cancels in-flight executions instead of waiting out their timeout budget", async () => {
+    const workdir = await makeTempDir("pi-hermes-bridge-stop-work-");
+    const outputDir = await makeTempDir("pi-hermes-bridge-stop-out-");
+    const stateRoot = await makeTempDir("pi-hermes-bridge-stop-state-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+    const post = (path: string, body: unknown) => fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const sessionResponse = await post("/sessions", { workdir });
+    const session = await sessionResponse.json() as { session_id: string };
+    const executeResponse = await post("/execute", {
+      request_id: "req_bridge_stop_cancel",
+      session_id: session.session_id,
+      objective: "__SLOW__ keep working until the bridge shuts down.",
+      workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["read"],
+      timeout_seconds: 600,
+      output_dir: outputDir,
+      metadata: {
+        mission_id: "mission-stop-cancel",
+        run_id: "run-stop-cancel",
+        step_id: "step-stop-cancel",
+      },
+    });
+    expect(executeResponse.status).toBe(202);
+    const accepted = await executeResponse.json() as { execution_id: string };
+
+    // Let the worker actually start streaming.
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+
+    const stopStarted = Date.now();
+    await server.stop();
+    expect(Date.now() - stopStarted).toBeLessThan(10000);
+
+    const run = server.getRun(accepted.execution_id);
+    expect(run?.status).toBe("cancelled");
+  }, 15000);
+
   it("marks runs restored from disk as failed instead of running forever", async () => {
     const workdir = await makeTempDir("pi-hermes-bridge-restore-work-");
     const stateRoot = await makeTempDir("pi-hermes-bridge-restore-state-");
