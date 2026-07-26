@@ -118,6 +118,7 @@ export class HermesBridgeServer {
     const snapshot = await this.stateStore.load();
     for (const session of snapshot.sessions) this.sessions.set(session.session_id, session);
     for (const run of snapshot.runs) this.runs.set(run.accepted.execution_id, run);
+    await this.reconcileRestoredRuns();
 
     this.server = createServer((req, res) => {
       void this.handle(req, res).catch((error) => {
@@ -158,6 +159,29 @@ export class HermesBridgeServer {
 
   getRun(executionId: string): HermesBridgeRunRecord | null {
     return this.runs.get(executionId) ?? null;
+  }
+
+  /**
+   * Runs restored from disk have no live adapter execution behind them: the
+   * worker process died with the previous bridge process. Without this they
+   * would report "running" forever. Mark them terminal so callers see an
+   * honest failure instead of a run that never finishes.
+   */
+  private async reconcileRestoredRuns(): Promise<void> {
+    for (const run of this.runs.values()) {
+      if (isTerminalRunRecord(run)) continue;
+      const message = "bridge restarted while execution was in flight";
+      if (run.v2Task) {
+        await this.failV2Run(run, "failed", "transport_error", message);
+      } else {
+        run.status = "failed";
+        run.error = message;
+        await this.stateStore.persistRun(run);
+      }
+      this.logger.log("warn", "hermes.bridge.run_orphaned_by_restart", {
+        executionId: run.accepted.execution_id,
+      });
+    }
   }
 
   private isAuthorized(req: IncomingMessage): boolean {
