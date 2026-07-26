@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { spawnHermesTransport, type HermesTransportExit } from "../../src/hermes/transport.js";
+import { __testables, spawnHermesTransport, type HermesTransportExit } from "../../src/hermes/transport.js";
 
 function waitForExit(transport: { onExit(listener: (event: HermesTransportExit) => void): void }): Promise<HermesTransportExit> {
   return new Promise((resolve) => transport.onExit(resolve));
@@ -48,4 +48,36 @@ setTimeout(() => { process.stdout.write(b.subarray(4)); process.exit(0); }, 100)
     const exit = await waitForExit(transport);
     expect(exit.exitCode).toBe(3);
   });
+
+  it("builds util-linux script args on linux (BSD form silently runs a shell instead)", () => {
+    const args = __testables.buildScriptPtyArgs("/usr/bin/hermes", ["chat", "-q", "hello world"], "linux");
+    expect(args).toEqual(["-qefc", "'/usr/bin/hermes' 'chat' '-q' 'hello world'", "/dev/null"]);
+  });
+
+  it("shell-quotes single quotes in script args on linux", () => {
+    const args = __testables.buildScriptPtyArgs("hermes", ["it's a prompt"], "linux");
+    expect(args[1]).toBe("'hermes' 'it'\\''s a prompt'");
+  });
+
+  it("keeps the BSD script arg form on darwin", () => {
+    const args = __testables.buildScriptPtyArgs("hermes", ["chat", "-q", "hi"], "darwin");
+    expect(args).toEqual(["-q", "/dev/null", "hermes", "chat", "-q", "hi"]);
+  });
+
+  it("runs the requested command through the script pty transport", async () => {
+    const transport = spawnHermesTransport({
+      command: process.execPath,
+      args: ["-e", "console.log('pty-transport-hello'); process.exit(7)"],
+      cwd: process.cwd(),
+      env: process.env,
+      prefer: "pty",
+    });
+    let output = "";
+    transport.onOutput((chunk) => { output += chunk; });
+    const exit = await waitForExit(transport);
+    expect(output).toContain("pty-transport-hello");
+    if (process.platform === "linux" && transport.backend === "script") {
+      expect(exit.exitCode).toBe(7);
+    }
+  }, 15000);
 });
