@@ -51,6 +51,7 @@ export const HermesTaskResultSchema = z.object({
   artifacts: z.array(HermesArtifactSchema).default([]),
   error: z.string().nullable().default(null),
   structured_output: z.boolean().default(false),
+  timed_out: z.boolean().default(false),
 });
 
 export const HermesTaskEventTypeSchema = z.enum([
