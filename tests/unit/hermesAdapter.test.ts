@@ -94,6 +94,49 @@ describe("HermesAdapter", () => {
     expect(result.summary).toContain("interrupted");
   }, 15000);
 
+  it("cancel and interrupt scoped to a stale execution_id do not touch the active execution", async () => {
+    const workdir = await makeTempDir("pi-hermes-work-");
+    const outputDir = await makeTempDir("pi-hermes-out-");
+    const adapter = await createAdapter();
+    const session = await adapter.start_session(workdir);
+
+    const request = HermesTaskRequestSchema.parse({
+      request_id: "req_test_scoped_cancel",
+      session_id: session.session_id,
+      execution_id: "exec_scoped_active",
+      objective: "__SLOW__ keep working until cancelled.",
+      workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["read"],
+      timeout_seconds: 30,
+      output_dir: outputDir,
+      metadata: {
+        mission_id: "mission-scoped",
+        run_id: "run-scoped",
+        step_id: "step-scoped",
+      },
+    });
+
+    await adapter.send_task(session.session_id, request);
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
+
+    // Aimed at an execution that is not the active one: must be a no-op.
+    await adapter.cancel(session.session_id, "exec_finished_earlier");
+    await adapter.interrupt(session.session_id, "exec_finished_earlier");
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 300));
+
+    const pending = await Promise.race([
+      adapter.collect_result(session.session_id).then((result) => result.status),
+      new Promise((resolvePromise) => setTimeout(() => resolvePromise("still-running"), 500)),
+    ]);
+    expect(pending).toBe("still-running");
+
+    // Aimed at the active execution: cancels it.
+    await adapter.cancel(session.session_id, "exec_scoped_active");
+    const result = await adapter.collect_result(session.session_id);
+    expect(result.status).toBe("cancelled");
+  }, 15000);
+
   it("read_events terminates instead of hanging when the session is closed", async () => {
     const workdir = await makeTempDir("pi-hermes-work-");
     const adapter = await createAdapter();
