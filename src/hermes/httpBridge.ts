@@ -271,7 +271,11 @@ export class HermesBridgeServer {
         json(res, 404, { error: `unknown execution_id: ${body.execution_id}` });
         return;
       }
-      await this.adapter.interrupt(run.session.session_id);
+      if (isTerminalRunRecord(run)) {
+        json(res, 409, { error: `execution already terminal: ${body.execution_id}`, status: run.status });
+        return;
+      }
+      await this.adapter.interrupt(run.session.session_id, run.accepted.execution_id);
       json(res, 202, { execution_id: body.execution_id, status: "interrupted" });
       return;
     }
@@ -284,7 +288,11 @@ export class HermesBridgeServer {
         json(res, 404, { error: `unknown execution_id: ${body.execution_id}` });
         return;
       }
-      await this.adapter.cancel(run.session.session_id);
+      if (isTerminalRunRecord(run)) {
+        json(res, 409, { error: `execution already terminal: ${body.execution_id}`, status: run.status });
+        return;
+      }
+      await this.adapter.cancel(run.session.session_id, run.accepted.execution_id);
       json(res, 202, { execution_id: body.execution_id, status: "cancelled" });
       return;
     }
@@ -518,7 +526,7 @@ export class HermesBridgeServer {
         const lastProgressAt = (run as HermesBridgeRunRecord & { __lastProgressAt?: number }).__lastProgressAt ?? 0;
         if (Date.now() - lastProgressAt < this.stuckTimeoutMs) return;
         stopped = true;
-        await this.adapter.cancel(run.session.session_id);
+        await this.adapter.cancel(run.session.session_id, run.accepted.execution_id);
         await this.failV2Run(run, "failed", "stuck_run", "semantic heartbeat missing beyond supervisor threshold");
       })().catch(() => {
         stopped = true;

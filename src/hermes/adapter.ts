@@ -321,20 +321,26 @@ export class HermesAdapter {
     }
   }
 
-  async interrupt(sessionId: string): Promise<void> {
+  async interrupt(sessionId: string, executionId?: string): Promise<void> {
     const session = this.requireSession(sessionId);
-    if (!session.active) return;
-    session.active.intent = "interrupt";
-    this.terminateTransport(session.active, "SIGINT");
+    const active = session.active;
+    if (!active) return;
+    // When the caller names an execution, only signal that execution: an
+    // interrupt aimed at a finished run must not hit whatever execution
+    // happens to be active on the session now.
+    if (executionId && active.executionId !== executionId) return;
+    active.intent = "interrupt";
+    this.terminateTransport(active, "SIGINT");
   }
 
-  async cancel(sessionId: string): Promise<void> {
+  async cancel(sessionId: string, executionId?: string): Promise<void> {
     const session = this.requireSession(sessionId);
     // Capture the execution being cancelled: the force-kill timer must not
     // re-read session.active when it fires, or it could SIGKILL a subsequent
     // execution that started after this one exited.
     const active = session.active;
     if (!active) return;
+    if (executionId && active.executionId !== executionId) return;
     active.intent = "cancel";
     this.terminateTransport(active, "SIGTERM");
     if (active.forceKillHandle) clearTimeout(active.forceKillHandle);

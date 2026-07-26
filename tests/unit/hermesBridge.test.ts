@@ -464,4 +464,74 @@ describe("HermesBridgeServer", () => {
     }
   }, 15000);
 
+  it("refuses to cancel or interrupt a run that is already terminal", async () => {
+    const workdir = await makeTempDir("pi-hermes-bridge-term-work-");
+    const outputDir = await makeTempDir("pi-hermes-bridge-term-out-");
+    const stateRoot = await makeTempDir("pi-hermes-bridge-term-state-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+    const post = (path: string, body: unknown) => fetch(`${base}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    try {
+      const sessionResponse = await post("/sessions", { workdir });
+      const session = await sessionResponse.json() as { session_id: string };
+
+      const executeResponse = await post("/execute", {
+        request_id: "req_bridge_terminal_guard",
+        session_id: session.session_id,
+        objective: "Write a report to the output dir and summarize it.",
+        workdir,
+        allowed_tools: ["bash"],
+        allowed_actions: ["read", "write"],
+        timeout_seconds: 20,
+        output_dir: outputDir,
+        metadata: {
+          mission_id: "mission-terminal-guard",
+          run_id: "run-terminal-guard",
+          step_id: "step-terminal-guard",
+        },
+      });
+      expect(executeResponse.status).toBe(202);
+      const accepted = await executeResponse.json() as { execution_id: string };
+
+      let status = "accepted";
+      for (let i = 0; i < 60; i++) {
+        const runResponse = await fetch(`${base}/runs/${accepted.execution_id}`);
+        status = ((await runResponse.json()) as { status: string }).status;
+        if (status === "completed") break;
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+      }
+      expect(status).toBe("completed");
+
+      // Cancelling a finished run must not signal whatever execution is
+      // active on the session now.
+      const cancelResponse = await post("/cancel", { execution_id: accepted.execution_id });
+      expect(cancelResponse.status).toBe(409);
+      expect(((await cancelResponse.json()) as { error: string }).error).toContain("terminal");
+
+      const interruptResponse = await post("/interrupt", { execution_id: accepted.execution_id });
+      expect(interruptResponse.status).toBe(409);
+    } finally {
+      await server.stop();
+    }
+  }, 15000);
+
 });
