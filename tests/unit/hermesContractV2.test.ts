@@ -129,6 +129,27 @@ describe("PI_HERMES_CONTRACT_V2 golden mission", () => {
     }
   }, 20000);
 
+  it("classifies a worker that exceeds its timeout budget as timed_out, not execution_error", async () => {
+    const workdir = await makeTempDir("pi-hermes-v2-work-");
+    const artifactRoot = await makeTempDir("pi-hermes-v2-artifacts-");
+    const stateRoot = await makeTempDir("pi-hermes-v2-state-");
+    const server = createContractServer(stateRoot, { stuckTimeoutMs: 30000 });
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    try {
+      const { sessionId } = await createSession(base, workdir);
+      const executionId = await executeGoldenMission(base, sessionId, artifactRoot, "__SLOW_STREAM__ stream past the timeout budget", 1);
+      const run = await waitForRun(base, executionId, 15000);
+
+      expect(run.state).toBe("timed_out");
+      expect(run.failure_class).toBe("timeout");
+      expect(run.status).toBe("failed");
+    } finally {
+      await server.stop();
+    }
+  }, 20000);
+
   it("fails malformed worker result payloads as contract errors", async () => {
     const workdir = await makeTempDir("pi-hermes-v2-work-");
     const artifactRoot = await makeTempDir("pi-hermes-v2-artifacts-");
@@ -178,7 +199,7 @@ async function createSession(base: string, workdir: string): Promise<{ sessionId
   return { sessionId: session.session_id };
 }
 
-async function executeGoldenMission(base: string, sessionId: string, artifactRoot: string, marker: string): Promise<string> {
+async function executeGoldenMission(base: string, sessionId: string, artifactRoot: string, marker: string, timeoutSeconds = 20): Promise<string> {
   const body = {
     schema_version: "2.0",
     request_id: `req_${Date.now()}`,
@@ -210,7 +231,7 @@ async function executeGoldenMission(base: string, sessionId: string, artifactRoo
       worktree_path: artifactRoot,
     },
     branch: "pi/test",
-    timeout_seconds: 20,
+    timeout_seconds: timeoutSeconds,
     budget: {
       max_tool_calls: 5,
       max_runtime_seconds: 10,

@@ -527,6 +527,7 @@ export class HermesAdapter {
       artifacts,
       error,
       structured_output: Boolean(structured),
+      timed_out: Boolean(active.timeoutError),
     });
 
     await safeWriteJson(active.resultPath, result);
@@ -548,6 +549,7 @@ export class HermesAdapter {
         summary: result.summary,
         error: result.error,
         artifact_count: result.artifacts.length,
+        timed_out: result.timed_out,
       },
     } as const;
     await this.pushEvent(session, terminalEvent);

@@ -574,9 +574,15 @@ export class HermesBridgeServer {
           });
         }
         break;
-      case "task.failed":
-        await this.failV2Run(run, "failed", "execution_error", "worker reported task failure");
+      case "task.failed": {
+        const payload = getEventPayload(event);
+        if (payload.timed_out === true) {
+          await this.failV2Run(run, "timed_out", "timeout", String(payload.error ?? "worker timed out"));
+        } else {
+          await this.failV2Run(run, "failed", "execution_error", "worker reported task failure");
+        }
         break;
+      }
       case "task.cancelled":
         await this.failV2Run(run, "cancelled", "execution_error", "worker reported cancellation");
         break;
@@ -593,6 +599,11 @@ export class HermesBridgeServer {
   private async finalizeV2Run(run: HermesBridgeRunRecord, adapterResult: HermesTaskResult): Promise<void> {
     const task = run.v2Task;
     if (!task) return;
+
+    if (adapterResult.timed_out) {
+      await this.failV2Run(run, "timed_out", "timeout", adapterResult.error ?? "worker timed out");
+      return;
+    }
 
     if (!adapterResult.structured_output) {
       await this.failV2Run(run, "failed", "contract_error", "worker result payload was not structured");
