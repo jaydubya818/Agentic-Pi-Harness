@@ -49,9 +49,19 @@ export function ruleMatches(rule: PolicyRule, input: DecisionInput): boolean {
 
   const paths = pathsOf(input.input);
   if (match.path && !paths.some((path) => path === match.path)) return false;
-  if (match.pathPrefix && !paths.some((path) => path.startsWith(match.pathPrefix!))) return false;
+  if (match.pathPrefix && !paths.some((path) => pathHasPrefix(path, match.pathPrefix!))) return false;
 
   return true;
+}
+
+/**
+ * Segment-aware prefix match: "tests" covers "tests" and "tests/x.ts" but
+ * not "tests-evil/x.ts". Raw startsWith would let a pathPrefix approve rule
+ * leak onto sibling paths that merely share leading characters.
+ */
+function pathHasPrefix(path: string, prefix: string): boolean {
+  const clean = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  return path === clean || path.startsWith(clean + "/");
 }
 
 export function evaluatePolicyDecision(doc: PolicyDoc, input: DecisionInput): PolicyDecision {
