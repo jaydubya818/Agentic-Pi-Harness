@@ -5,6 +5,12 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 ## [Unreleased]
 
 ### Fixed
+- The `script(1)` PTY transport passed BSD-style arguments on every platform; util-linux `script` ignores extra positional arguments, so on Linux it spawned an interactive shell, never ran the worker command, and reported exit 0 with empty output. Linux now uses `script -qefc '<quoted command>' /dev/null` (exit code propagated, output flushed); BSD/macOS behavior is unchanged.
+- `POST /cancel` and `POST /interrupt` resolved the execution to a run but then signalled the run's *session*, i.e. whatever execution is currently active on it. Cancelling an already-finished run could SIGTERM an unrelated execution reusing the session. Terminal runs now return 409, and `adapter.cancel`/`interrupt` accept an execution id and no-op on mismatch.
+- Worker timeouts are classified as v2 state `timed_out` / failure class `timeout` instead of `execution_error` (or `contract_error` when the SIGTERM'd worker never printed its structured result block). `HermesTaskResult` and the terminal adapter event carry a `timed_out` flag.
+- Runs restored from bridge state after a restart no longer report `accepted`/`running` forever; with the worker process dead alongside the old bridge, they are marked failed (`transport_error` for v2 runs) with an explicit bridge-restart error.
+- `HermesBridgeServer.stop()` cancels in-flight executions before draining watchers instead of blocking shutdown until the worker finished or hit its timeout budget (900s default).
+- Policy `pathPrefix` rules are segment-aware: `"tests"` no longer matches `tests-evil/x.ts` or `tests.bak`, closing an approve-rule leak onto sibling paths sharing leading characters.
 - A stale cancel force-kill timer could SIGKILL the *next* execution on the same session: the timer re-read `session.active` when it fired, and a double cancel (or the timeout path) orphaned the previous timer so exit cleanup never cleared it. The timer now captures the execution being cancelled and pending force-kill timers are cleared before a new one is armed.
 - `read_events` iterators no longer hang forever when their session is closed mid-iteration; closed sessions set a flag that drained generators observe instead of re-parking on a waiter nothing can wake.
 - Raw worker output retained in memory for end-of-run parsing is capped at an 8M-char tail (configurable via `maxRetainedOutputChars`); the full stream still lands in `hermes.raw.log`. Previously a chatty long-running worker grew the harness heap without bound.
