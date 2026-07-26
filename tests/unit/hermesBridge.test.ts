@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { HermesBridgeServer } from "../../src/hermes/httpBridge.js";
+import { HermesBridgeStateStore } from "../../src/hermes/bridgeState.js";
 import { runTaskViaBridge } from "../../src/hermes/bridgeClient.js";
 
 const createdPaths: string[] = [];
@@ -529,6 +530,90 @@ describe("HermesBridgeServer", () => {
 
       const interruptResponse = await post("/interrupt", { execution_id: accepted.execution_id });
       expect(interruptResponse.status).toBe(409);
+    } finally {
+      await server.stop();
+    }
+  }, 15000);
+
+  it("marks runs restored from disk as failed instead of running forever", async () => {
+    const workdir = await makeTempDir("pi-hermes-bridge-restore-work-");
+    const stateRoot = await makeTempDir("pi-hermes-bridge-restore-state-");
+
+    // Persist a non-terminal run as if a previous bridge process died mid-run.
+    const store = new HermesBridgeStateStore(stateRoot);
+    await store.init();
+    await store.persistRun({
+      accepted: {
+        request_id: "req_orphan",
+        session_id: "sess_orphan",
+        execution_id: "exec_orphan",
+        status: "accepted",
+      },
+      request: {
+        request_id: "req_orphan",
+        session_id: "sess_orphan",
+        objective: "orphaned by crash",
+        workdir,
+        allowed_tools: [],
+        allowed_actions: [],
+        timeout_seconds: 60,
+        output_dir: workdir,
+        metadata: {},
+      },
+      status: "running",
+      session: {
+        session_id: "sess_orphan",
+        workdir,
+        profile: null,
+        runtime_dir: workdir,
+        hermes_session_id: null,
+        status: "running",
+        created_at: new Date().toISOString(),
+      },
+      events: [],
+      result: null,
+      error: null,
+    });
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    try {
+      const runResponse = await fetch(`${base}/runs/exec_orphan`);
+      expect(runResponse.status).toBe(200);
+      const run = await runResponse.json() as { status: string; error: string | null };
+      expect(run.status).toBe("failed");
+      expect(run.error).toContain("bridge restarted");
+
+      // And it stays terminal across another restart.
+      await server.stop();
+      const secondServer = new HermesBridgeServer({
+        host: "127.0.0.1",
+        port: 0,
+        stateRoot,
+        enforceKnowledgePolicy: false,
+      });
+      const secondListening = await secondServer.start();
+      try {
+        const persisted = await fetch(`http://${secondListening.host}:${secondListening.port}/runs/exec_orphan`);
+        const persistedRun = await persisted.json() as { status: string };
+        expect(persistedRun.status).toBe("failed");
+      } finally {
+        await secondServer.stop();
+      }
     } finally {
       await server.stop();
     }
