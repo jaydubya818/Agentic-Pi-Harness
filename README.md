@@ -117,6 +117,13 @@ npm install
 npm run build
 ```
 
+> **Note (npm v12+):** `node-pty` compiles a native addon in its install
+> script, and there is no Linux prebuild. npm v12 blocks install scripts by
+> default, which leaves `node-pty` without its `pty.node` binary — the PTY
+> transport then fails at import time. Allow the script explicitly (e.g.
+> `npm install --allow-scripts=node-pty`, or your npm version's equivalent)
+> when installing on Linux.
+
 Run the canonical golden path:
 
 ```bash
