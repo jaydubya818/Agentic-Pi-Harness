@@ -2,13 +2,46 @@ import { describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createGoldenPathMockModelClient } from "../../src/adapter/pi-adapter.js";
+import { createGoldenPathMockModelClient, MockModelClient } from "../../src/adapter/pi-adapter.js";
 import { ReplayRecorder, verifyTape } from "../../src/replay/recorder.js";
 import { EffectRecorder, readEffectLog } from "../../src/effect/recorder.js";
 import { runQueryLoop } from "../../src/loop/query.js";
 import { readPolicyLog } from "../../src/policy/decision.js";
 
 describe("query loop", () => {
+  it("reports non-Error tool throws with their stringified value", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-query-throw-"));
+    const tape = new ReplayRecorder(join(dir, "tape.jsonl"));
+    await tape.writeHeader({
+      sessionId: "session-throw",
+      loopGitSha: "dev",
+      policyDigest: "sha256:policy-test",
+      costTableVersion: "2026-04-01",
+    });
+
+    const result = await runQueryLoop({
+      sessionId: "session-throw",
+      model: new MockModelClient([
+        { type: "message_start", schemaVersion: 1 },
+        { type: "tool_use", schemaVersion: 1, id: "t1", name: "boom", input: {} },
+        { type: "message_stop", schemaVersion: 1, stopReason: "end_turn" },
+      ]),
+      tape,
+      effects: new EffectRecorder(),
+      checkpointPath: join(dir, "checkpoint.json"),
+      effectLogPath: join(dir, "effects.jsonl"),
+      policyLogPath: join(dir, "policy.jsonl"),
+      policyDigest: "sha256:policy-test",
+      tools: {
+        boom: async () => { throw "kaboom"; },
+      },
+    });
+
+    const toolResult = result.events.find((event) => event.type === "tool_result");
+    expect(toolResult).toMatchObject({ isError: true });
+    expect((toolResult as { output: string }).output).toContain("tool error: kaboom");
+  });
+
   it("runs the canonical golden path end to end at Tier A scope", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-query-"));
     const workdir = join(dir, "work");

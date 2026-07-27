@@ -254,7 +254,7 @@ async function executeApprovedTool(
     }
   } catch (error) {
     isError = true;
-    rawOutput = `tool error: ${String((error as Error).message)}`;
+    rawOutput = `tool error: ${error instanceof Error ? error.message : String(error)}`;
     counters.inc("tool.error");
     if (inp.hooks?.length) {
       await dispatchPostToolHooks(inp.hooks, {
