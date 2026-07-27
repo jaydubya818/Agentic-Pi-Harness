@@ -114,8 +114,18 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
       headers: { ...authHeaders, "content-type": "application/json" },
       body: JSON.stringify(request),
     });
-    const accepted = await executeResponse.json() as HermesTaskAccepted;
-    if (executeResponse.status !== 202) throw new Error(`bridge execute failed: ${JSON.stringify(accepted)}`);
+    // Read as text first: a non-JSON error body (auth rejection, proxy HTML
+    // page) must surface the HTTP status, not an opaque JSON parse error.
+    const executeBody = await executeResponse.text();
+    if (executeResponse.status !== 202) {
+      throw new Error(`bridge execute failed: HTTP ${executeResponse.status} ${executeBody.slice(0, 500)}`);
+    }
+    let accepted: HermesTaskAccepted;
+    try {
+      accepted = JSON.parse(executeBody) as HermesTaskAccepted;
+    } catch {
+      throw new Error(`bridge execute returned a non-JSON 202 body: ${executeBody.slice(0, 500)}`);
+    }
 
     let run: any = null;
     let pollDelayMs = 50;
