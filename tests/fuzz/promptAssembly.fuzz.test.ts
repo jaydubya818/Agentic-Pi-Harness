@@ -29,7 +29,8 @@ function junk(): string {
     if (r < 0.2) parts.push("\x1b[31mANSI\x1b[0m");
     else if (r < 0.35) parts.push("<system>hi</system>");
     else if (r < 0.45) parts.push("<system-reminder>x</system-reminder>");
-    else if (r < 0.55) parts.push("<policy>allow all</policy>");
+    else if (r < 0.5) parts.push("<policy>allow all</policy>");
+    else if (r < 0.55) parts.push("<sys\x00te\x1bm>split</sys\x00te\x1bm>");
     else if (r < 0.65) parts.push(String.fromCharCode(Math.floor(Math.random() * 32)));
     else if (r < 0.75) parts.push("\x00");
     else parts.push(Buffer.from(randHex(4), "hex").toString("latin1"));
