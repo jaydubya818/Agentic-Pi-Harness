@@ -67,6 +67,37 @@ describe("PolicyEngine", () => {
     expect(decide("tests.bak")).toBe("deny");
   });
 
+  it("normalizes paths so aliasing and traversal cannot dodge rules", () => {
+    const aliasDoc: PolicyDoc = {
+      schemaVersion: 1,
+      defaultAction: "ask",
+      rules: [
+        { id: "deny-secrets", action: "deny", match: { pathPrefix: "secrets" } },
+        { id: "allow-tests-write", action: "approve", match: { tool: "write_file", pathPrefix: "tests" } },
+        { id: "allow-exact", action: "approve", match: { tool: "read_file", path: "docs/README.md" } },
+      ],
+    };
+    const aliasEngine = new PolicyEngine(aliasDoc);
+    const decide = (toolName: string, path: string) => aliasEngine.decide({
+      toolCallId: "n",
+      toolName,
+      mode: "assist",
+      input: { path, content: "x" },
+      at: "2026-04-09T00:00:00Z",
+    }).result;
+
+    // Aliased spellings of a denied location still hit the deny rule.
+    expect(decide("write_file", "./secrets/key.pem")).toBe("deny");
+    expect(decide("write_file", "secrets//key.pem")).toBe("deny");
+    expect(decide("write_file", "tests/../secrets/key.pem")).toBe("deny");
+    // Traversal cannot ride an approve prefix out of its subtree.
+    expect(decide("write_file", "tests/../src/index.ts")).toBe("ask");
+    expect(decide("write_file", "../tests/math.test.ts")).toBe("ask");
+    // Aliased spellings still match exact-path and prefix approve rules.
+    expect(decide("read_file", "./docs/README.md")).toBe("approve");
+    expect(decide("write_file", "tests/./math.test.ts")).toBe("approve");
+  });
+
   it("falls through to explicit default deny", () => {
     const d = eng.decide({
       toolCallId: "c",

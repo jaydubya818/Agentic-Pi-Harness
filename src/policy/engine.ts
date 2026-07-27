@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { z } from "zod";
 import { PolicyDecision } from "../schemas/index.js";
 
@@ -47,20 +48,33 @@ export function ruleMatches(rule: PolicyRule, input: DecisionInput): boolean {
   if (match.tool && match.tool !== input.toolName) return false;
   if (match.mode && match.mode !== input.mode) return false;
 
-  const paths = pathsOf(input.input);
-  if (match.path && !paths.some((path) => path === match.path)) return false;
+  const paths = pathsOf(input.input).map(normalizePolicyPath);
+  if (match.path && !paths.some((path) => path === normalizePolicyPath(match.path!))) return false;
   if (match.pathPrefix && !paths.some((path) => pathHasPrefix(path, match.pathPrefix!))) return false;
 
   return true;
 }
 
 /**
+ * Path matching operates on normalized posix-style paths so aliased
+ * spellings of the same location ("./secrets/key", "secrets//key") cannot
+ * dodge a deny rule, and traversal segments ("tests/../secrets/key") cannot
+ * ride an approve rule out of its intended subtree.
+ */
+function normalizePolicyPath(path: string): string {
+  return posix.normalize(path.replace(/\\/g, "/"));
+}
+
+/**
  * Segment-aware prefix match: "tests" covers "tests" and "tests/x.ts" but
  * not "tests-evil/x.ts". Raw startsWith would let a pathPrefix approve rule
- * leak onto sibling paths that merely share leading characters.
+ * leak onto sibling paths that merely share leading characters. Paths that
+ * still point above the root after normalization ("../x") never match a
+ * prefix rule — their real location cannot be proven from the string.
  */
 function pathHasPrefix(path: string, prefix: string): boolean {
-  const clean = prefix.endsWith("/") ? prefix.slice(0, -1) : prefix;
+  if (path === ".." || path.startsWith("../")) return false;
+  const clean = normalizePolicyPath(prefix).replace(/\/+$/, "");
   return path === clean || path.startsWith(clean + "/");
 }
 
