@@ -81,12 +81,27 @@ export async function requestApprovalDecision(input: {
   const timedOut = Symbol("approval-timeout");
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
-    const raced = await Promise.race([
-      input.requester.request(input.packet, abortController.signal),
-      new Promise<typeof timedOut>((resolve) => {
-        timeoutHandle = setTimeout(() => resolve(timedOut), input.timeoutMs);
-      }),
-    ]);
+    let raced: ApprovalResponse | typeof timedOut;
+    try {
+      raced = await Promise.race([
+        input.requester.request(input.packet, abortController.signal),
+        new Promise<typeof timedOut>((resolve) => {
+          timeoutHandle = setTimeout(() => resolve(timedOut), input.timeoutMs);
+        }),
+      ]);
+    } catch (error) {
+      // A crashing approval requester must fail closed to deny — not
+      // propagate and abort the whole run over a broken approval channel.
+      abortController.abort();
+      return {
+        packetId: input.packet.packetId,
+        toolCallId: input.packet.toolCallId,
+        outcome: "deny",
+        actor: "system",
+        reason: `approval requester failed: ${error instanceof Error ? error.message : String(error)}`,
+        decidedAt: decidedAt(),
+      };
+    }
 
     if (raced === timedOut) {
       abortController.abort();
