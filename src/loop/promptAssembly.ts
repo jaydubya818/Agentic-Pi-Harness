@@ -64,16 +64,19 @@ export function sanitizeToolOutput(raw: string, opts: Pick<WrapOptions, "toolCal
     rewrites.push("ansi");
   }
 
-  const withoutNestedTags = escapeNestedTags(out);
-  if (withoutNestedTags !== out) {
-    out = withoutNestedTags;
-    rewrites.push("nested_tag");
-  }
-
+  // Control chars must be stripped before tag escaping: otherwise a split
+  // tag like `<sys\x00tem>` sails past the escape pass and reassembles into
+  // a live `<system>` tag when the NUL (or a stray ESC) is removed.
   const withoutControlChars = stripControlChars(out);
   if (withoutControlChars !== out) {
     out = withoutControlChars;
     rewrites.push("control_char");
+  }
+
+  const withoutNestedTags = escapeNestedTags(out);
+  if (withoutNestedTags !== out) {
+    out = withoutNestedTags;
+    rewrites.push("nested_tag");
   }
 
   const { text: truncated, truncatedBytes } = truncateUtf8(out, opts.maxBytes);
