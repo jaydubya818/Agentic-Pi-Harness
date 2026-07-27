@@ -117,6 +117,24 @@ describe("approval runtime", () => {
     expect(observedSignal!.aborted).toBe(true);
   });
 
+  it("fails closed to deny when the approval requester throws", async () => {
+    const packet = createApprovalPacket({ sessionId: "s1", decision: askDecision(), toolName: "write_file", timeoutMs: 50, requestedAt: "2026-04-10T00:00:01Z" });
+
+    await expect(requestApprovalDecision({
+      packet,
+      requester: { request: async () => { throw new Error("approval channel down"); } },
+      timeoutMs: 50,
+      decidedAt: () => "2026-04-10T00:00:02Z",
+    })).resolves.toEqual({
+      packetId: "t1:approval",
+      toolCallId: "t1",
+      outcome: "deny",
+      actor: "system",
+      reason: "approval requester failed: approval channel down",
+      decidedAt: "2026-04-10T00:00:02Z",
+    });
+  });
+
   it("keeps a human deny as deny even when its reason says approval timeout", async () => {
     const packet = createApprovalPacket({ sessionId: "s1", decision: askDecision(), toolName: "write_file", timeoutMs: 1000, requestedAt: "2026-04-10T00:00:01Z" });
 
