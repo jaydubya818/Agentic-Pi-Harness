@@ -5,6 +5,15 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 ## [Unreleased]
 
 ### Fixed
+- Policy `path` / `pathPrefix` matching normalizes paths before comparison: aliased spellings of a denied location (`./secrets/key`, `secrets//key`) no longer dodge a deny rule, and traversal segments (`tests/../secrets/key`) can no longer ride an approve prefix rule out of its subtree. Paths still pointing above the root after normalization (`../x`) never match a prefix rule.
+- The tool-output sanitizer strips control characters *before* escaping nested `<system>`/`<policy>`/`<tool_output>` tags; previously `<sys\x00tem>` passed the escape pass untouched and reassembled into a live `<system>` tag once the NUL (or a stray ESC) was removed.
+- An approval requester that throws (crashed approval UI, dropped bridge connection) fails closed to a system deny with the failure reason instead of aborting the whole query loop.
+- Tools that throw non-Error values no longer produce `tool error: undefined`; the thrown value is stringified into the tool_result.
+- `runTaskViaBridge` reads the `/execute` body as text before parsing, so a non-JSON error response (auth rejection, proxy HTML) surfaces its HTTP status and body instead of an opaque JSON parse error.
+
+### Security
+- Dev-dependency advisories resolved via `npm audit fix`: vitest 3.2.7 (critical — arbitrary file read/execute via the UI server, GHSA-5xrq-8626-4rwp), plus brace-expansion, js-yaml, and postcss DoS/file-read advisories. Remaining findings sit behind the pinned eslint 8 toolchain.
+
 - The `script(1)` PTY transport passed BSD-style arguments on every platform; util-linux `script` ignores extra positional arguments, so on Linux it spawned an interactive shell, never ran the worker command, and reported exit 0 with empty output. Linux now uses `script -qefc '<quoted command>' /dev/null` (exit code propagated, output flushed); BSD/macOS behavior is unchanged.
 - `POST /cancel` and `POST /interrupt` resolved the execution to a run but then signalled the run's *session*, i.e. whatever execution is currently active on it. Cancelling an already-finished run could SIGTERM an unrelated execution reusing the session. Terminal runs now return 409, and `adapter.cancel`/`interrupt` accept an execution id and no-op on mismatch.
 - Worker timeouts are classified as v2 state `timed_out` / failure class `timeout` instead of `execution_error` (or `contract_error` when the SIGTERM'd worker never printed its structured result block). `HermesTaskResult` and the terminal adapter event carry a `timed_out` flag.
