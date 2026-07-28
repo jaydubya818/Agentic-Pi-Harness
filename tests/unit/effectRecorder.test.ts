@@ -52,6 +52,37 @@ describe("effect recorder", () => {
     expect(record.unifiedDiff.length).toBeLessThan(500);
   });
 
+  it("discard releases a pre-snapshot scope so a failed tool call does not retain it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-effect-discard-"));
+    const file = join(dir, "f.txt");
+    await writeFile(file, "before\n");
+
+    const recorder = new EffectRecorder();
+    await recorder.snapshotPre([file], "tool-fail");
+    recorder.discard("tool-fail");
+
+    // A later capture for the same call id must not see the stale snapshot.
+    const record = await recorder.capturePost("session-1", "tool-fail", "write_file", [file]);
+    expect(record.preHashes[file]).toBe("absent");
+  });
+
+  it("releases the back-compat default scope after capturePost consumes it", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-effect-default-"));
+    const file = join(dir, "f.txt");
+    await writeFile(file, "v1\n");
+
+    const recorder = new EffectRecorder();
+    await recorder.snapshotPre([file]);
+    await writeFile(file, "v2\n");
+    const first = await recorder.capturePost("session-1", "call-1", "write_file", [file]);
+    expect(first.unifiedDiff).toContain("-v1");
+
+    // The default scope was consumed; a capture without a fresh snapshot
+    // must not reuse the v1 pre-state.
+    const second = await recorder.capturePost("session-1", "call-2", "write_file", [file]);
+    expect(second.preHashes[file]).toBe("absent");
+  });
+
   it("writes, reads, and renders effect logs for what-changed", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-effect-log-"));
     const path = join(dir, "effects.jsonl");

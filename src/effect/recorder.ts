@@ -228,6 +228,19 @@ export class EffectRecorder {
     const s = this.scopes.get(toolCallId) ?? this.scopes.get("__default__") ?? new EffectScope();
     const rec = await s.capturePost(sessionId, toolCallId, toolName, paths);
     this.scopes.delete(toolCallId);
+    // The back-compat default scope must also be released once consumed, or
+    // every snapshotPre/capturePost pair through the sequential API leaks
+    // (and later reuses) the pre-snapshot text it retained.
+    if (s === this.scopes.get("__default__")) this.scopes.delete("__default__");
     return rec;
+  }
+
+  /**
+   * Release the scope for a tool call whose execution failed before
+   * capturePost ran. Without this, a failing mutating tool leaks its
+   * pre-snapshot (full file text) in the scope map for the session's life.
+   */
+  discard(toolCallId: string): void {
+    this.scopes.delete(toolCallId);
   }
 }
