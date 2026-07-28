@@ -181,6 +181,7 @@ npm run hermes:bridge -- --host 127.0.0.1 --port 8787
 
 Endpoints:
 - `POST /sessions`
+- `POST /sessions/:id/close` — closes the adapter session once its runs are terminal (`409` while an execution is in flight, `404` for unknown ids)
 - `POST /execute`
 - `POST /interrupt`
 - `POST /cancel`
