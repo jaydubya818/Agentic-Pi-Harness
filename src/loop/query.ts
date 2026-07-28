@@ -256,6 +256,12 @@ async function executeApprovedTool(
     isError = true;
     rawOutput = `tool error: ${error instanceof Error ? error.message : String(error)}`;
     counters.inc("tool.error");
+    if (isMutatingTool(event.name)) {
+      // capturePost never ran, so release the pre-snapshot scope; otherwise
+      // every failing mutating call leaks its retained file text for the
+      // rest of the session.
+      inp.effects.discard(event.id);
+    }
     if (inp.hooks?.length) {
       await dispatchPostToolHooks(inp.hooks, {
         event: "PostToolUse",
