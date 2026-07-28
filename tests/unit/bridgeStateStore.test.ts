@@ -31,7 +31,7 @@ describe("HermesBridgeStateStore", () => {
   });
 
   it("refuses execution and session ids that are not safe path segments", async () => {
-    for (const bad of ["../escape", "a/b", "a\\b", ".", "..", "a\0b"]) {
+    for (const bad of ["../escape", "a/b", "a\\b", ".", "..", "a\0b", ""]) {
       expect(() => assertSafeStateIdSegment(bad, "execution_id")).toThrow(/not a safe path segment/);
     }
     expect(assertSafeStateIdSegment("exec_abc123", "execution_id")).toBe("exec_abc123");

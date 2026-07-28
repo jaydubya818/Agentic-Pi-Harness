@@ -71,7 +71,7 @@ export interface BridgeStateSnapshot {
  * bridge state root. Reject anything that could traverse out of it.
  */
 export function assertSafeStateIdSegment(value: string, label: string): string {
-  if (value === "." || value === ".." || value.includes("/") || value.includes("\\") || value.includes("\0")) {
+  if (value === "" || value === "." || value === ".." || value.includes("/") || value.includes("\\") || value.includes("\0")) {
     throw new Error(`${label} is not a safe path segment: ${JSON.stringify(value)}`);
   }
   return value;
