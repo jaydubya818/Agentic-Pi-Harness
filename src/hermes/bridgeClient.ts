@@ -80,6 +80,7 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
   const listening = server ? await server.start() : null;
   const baseUrl = input.bridgeUrl ?? `http://${listening!.host}:${listening!.port}`;
   const authHeaders: Record<string, string> = input.bridgeToken ? { Authorization: `Bearer ${input.bridgeToken}` } : {};
+  let adapterSession: HermesAdapterSession | null = null;
 
   try {
     const sessionResponse = await fetch(`${baseUrl}/sessions`, {
@@ -90,7 +91,7 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
     if (!sessionResponse.ok) {
       throw new Error(`bridge session create failed: HTTP ${sessionResponse.status} ${await sessionResponse.text()}`);
     }
-    const adapterSession = await sessionResponse.json() as HermesAdapterSession;
+    adapterSession = await sessionResponse.json() as HermesAdapterSession;
 
     const request = {
       request_id: "req_1",
@@ -179,6 +180,17 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
       bridge_url: baseUrl,
     };
   } finally {
+    // Release the bridge-side session so a long-lived bridge does not
+    // accumulate one idle adapter session per governed run. Best-effort:
+    // a still-running execution (409) or an unreachable bridge must not
+    // mask the run's real outcome.
+    if (adapterSession) {
+      try {
+        await fetch(`${baseUrl}/sessions/${adapterSession.session_id}/close`, { method: "POST", headers: authHeaders });
+      } catch {
+        // ignore — session close is cleanup, not part of the run contract
+      }
+    }
     if (server) await server.stop();
   }
 }
