@@ -333,6 +333,35 @@ export class HermesBridgeServer {
       return;
     }
 
+    const sessionCloseMatch = path.match(/^\/sessions\/([^/]+)\/close$/);
+    if (method === "POST" && sessionCloseMatch) {
+      const sessionId = sessionCloseMatch[1];
+      const session = this.sessions.get(sessionId);
+      if (!session) {
+        json(res, 404, { error: `unknown session_id: ${sessionId}` });
+        return;
+      }
+      for (const run of this.runs.values()) {
+        if (run.session.session_id === sessionId && !isTerminalRunRecord(run)) {
+          json(res, 409, { error: `session has a non-terminal execution: ${run.accepted.execution_id}`, execution_id: run.accepted.execution_id });
+          return;
+        }
+      }
+      try {
+        await this.adapter.close_session(sessionId);
+      } catch {
+        // The adapter may not know this session (e.g. the record was
+        // restored from disk after a bridge restart and the adapter
+        // process is new); bridge bookkeeping still applies.
+      }
+      session.status = "closed";
+      await this.stateStore.persistSession(session);
+      this.sessions.delete(sessionId);
+      this.logger.log("info", "hermes.bridge.session_closed", { sessionId });
+      json(res, 200, { session_id: sessionId, status: "closed" });
+      return;
+    }
+
     const runMatch = path.match(/^\/runs\/([^/]+)$/);
     if (method === "GET" && runMatch) {
       const run = this.runs.get(runMatch[1]);
