@@ -4,7 +4,12 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 
 ## [Unreleased]
 
+### Added
+- `POST /sessions/:id/close` on the Hermes bridge closes the adapter session once its runs are terminal (409 while an execution is in flight, 404 for unknown ids). `runTaskViaBridge` releases its session best-effort after each governed run, so a long-lived shared bridge no longer accumulates one idle adapter session per run.
+
 ### Fixed
+- A mutating tool that threw leaked its `EffectScope` (full pre-snapshot text of every touched file) in the recorder's scope map for the life of the session; the query loop now discards the scope on the tool-error path. The back-compat default scope is likewise released once `capturePost` consumes it instead of accumulating (and potentially reusing) stale pre-state.
+- `assertSafeStateIdSegment` rejects empty ids: an empty execution_id mapped the run directory onto the bridge state `runs/` root itself, and an empty session_id persisted to `sessions/.json`.
 - Policy `path` / `pathPrefix` matching normalizes paths before comparison: aliased spellings of a denied location (`./secrets/key`, `secrets//key`) no longer dodge a deny rule, and traversal segments (`tests/../secrets/key`) can no longer ride an approve prefix rule out of its subtree. Paths still pointing above the root after normalization (`../x`) never match a prefix rule.
 - The tool-output sanitizer strips control characters *before* escaping nested `<system>`/`<policy>`/`<tool_output>` tags; previously `<sys\x00tem>` passed the escape pass untouched and reassembled into a live `<system>` tag once the NUL (or a stray ESC) was removed.
 - An approval requester that throws (crashed approval UI, dropped bridge connection) fails closed to a system deny with the failure reason instead of aborting the whole query loop.
@@ -12,6 +17,7 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 - `runTaskViaBridge` reads the `/execute` body as text before parsing, so a non-JSON error response (auth rejection, proxy HTML) surfaces its HTTP status and body instead of an opaque JSON parse error.
 
 ### Security
+- esbuild forced to 0.28.1 via an `overrides` entry for GHSA-g7r4-m6w7-qqqr (dev-server arbitrary file read on Windows; dev-dep only). `npm audit fix` could not apply it because tsx and vite pin ranges below the patched version.
 - Dev-dependency advisories resolved via `npm audit fix`: vitest 3.2.7 (critical — arbitrary file read/execute via the UI server, GHSA-5xrq-8626-4rwp), plus brace-expansion, js-yaml, and postcss DoS/file-read advisories. Remaining findings sit behind the pinned eslint 8 toolchain.
 
 - The `script(1)` PTY transport passed BSD-style arguments on every platform; util-linux `script` ignores extra positional arguments, so on Linux it spawned an interactive shell, never ran the worker command, and reported exit 0 with empty output. Linux now uses `script -qefc '<quoted command>' /dev/null` (exit code propagated, output flushed); BSD/macOS behavior is unchanged.
