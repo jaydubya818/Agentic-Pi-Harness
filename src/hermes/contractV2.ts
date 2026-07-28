@@ -246,7 +246,11 @@ export async function computeArtifactManifestItem(input: {
     role: input.role,
     path: filePath,
     sha256: `sha256:${createHash("sha256").update(content).digest("hex")}`,
-    size_bytes: fileStat.size,
+    // Size the bytes that were hashed, not a separate stat() snapshot: a
+    // worker rewriting the artifact between the two calls would otherwise
+    // produce a manifest whose sha256 and size_bytes describe different
+    // file states.
+    size_bytes: content.length,
     mime_type: inferMimeType(filePath),
     created_at: new Date(fileStat.mtimeMs).toISOString(),
     produced_by: input.producedBy,
