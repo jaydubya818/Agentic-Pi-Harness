@@ -9,6 +9,7 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 
 ### Fixed
 - A mutating tool that threw leaked its `EffectScope` (full pre-snapshot text of every touched file) in the recorder's scope map for the life of the session; the query loop now discards the scope on the tool-error path. The back-compat default scope is likewise released once `capturePost` consumes it instead of accumulating (and potentially reusing) stale pre-state.
+- Contract V2 artifact manifest items report `size_bytes` for the exact bytes that were hashed instead of a separate `stat()` snapshot, so a concurrent rewrite can no longer produce a manifest whose sha256 and size describe different file states.
 - `assertSafeStateIdSegment` rejects empty ids: an empty execution_id mapped the run directory onto the bridge state `runs/` root itself, and an empty session_id persisted to `sessions/.json`.
 - Policy `path` / `pathPrefix` matching normalizes paths before comparison: aliased spellings of a denied location (`./secrets/key`, `secrets//key`) no longer dodge a deny rule, and traversal segments (`tests/../secrets/key`) can no longer ride an approve prefix rule out of its subtree. Paths still pointing above the root after normalization (`../x`) never match a prefix rule.
 - The tool-output sanitizer strips control characters *before* escaping nested `<system>`/`<policy>`/`<tool_output>` tags; previously `<sys\x00tem>` passed the escape pass untouched and reassembled into a live `<system>` tag once the NUL (or a stray ESC) was removed.
