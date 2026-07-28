@@ -64,5 +64,8 @@
     "replay",
     "agentic"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "overrides": {
+    "esbuild": "^0.28.1"
+  }
 }
