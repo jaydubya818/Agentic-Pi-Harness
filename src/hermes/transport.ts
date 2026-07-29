@@ -1,4 +1,4 @@
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { spawn as spawnChildProcess } from "node:child_process";
 import type { ChildProcess, ChildProcessByStdio } from "node:child_process";
 import { delimiter, isAbsolute, join } from "node:path";
@@ -175,6 +175,7 @@ function quoteForShell(value: string): string {
 }
 
 function resolveExecutable(command: string, env: NodeJS.ProcessEnv): string | null {
+  if (command.length === 0) return null;
   const hasExplicitPath = command.includes("/") || command.includes("\\") || isAbsolute(command);
   if (hasExplicitPath) {
     return isExecutable(command) ? command : null;
@@ -208,7 +209,10 @@ function expandWindowsCandidates(command: string, env: NodeJS.ProcessEnv): strin
 function isExecutable(path: string): boolean {
   try {
     accessSync(path, fsConstants.X_OK);
-    return true;
+    // X_OK passes for directories too (it means "searchable"), so a PATH
+    // entry containing a *directory* named like the command would resolve
+    // and then fail at spawn with a confusing EACCES. Only files count.
+    return statSync(path).isFile();
   } catch {
     return false;
   }
