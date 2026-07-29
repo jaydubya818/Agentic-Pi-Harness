@@ -1,4 +1,4 @@
-import { accessSync, constants as fsConstants } from "node:fs";
+import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -33,7 +33,9 @@ export function detectHermes(): HermesDiscovery {
 function isExecutable(path: string): boolean {
   try {
     accessSync(path, fsConstants.X_OK);
-    return true;
+    // X_OK passes for directories (searchable), so a directory named
+    // "hermes" would be reported as the worker binary. Only files count.
+    return statSync(path).isFile();
   } catch {
     return false;
   }
