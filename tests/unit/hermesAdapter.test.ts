@@ -226,4 +226,52 @@ describe("HermesAdapter", () => {
     const result = await second;
     expect(result.status).toBe("cancelled");
   }, 15000);
+
+  it("settles watchers and the completion promise when spawn setup fails", async () => {
+    const workdir = await makeTempDir("pi-hermes-work-");
+    const outputDir = await makeTempDir("pi-hermes-out-");
+    // Empty command: child_process.spawn throws synchronously, exercising
+    // the send_task catch path (worker never spawned).
+    const adapter = new HermesAdapter({
+      command: "",
+      stateRoot: await makeTempDir("pi-hermes-state-"),
+      preferTransport: "subprocess",
+    });
+    const session = await adapter.start_session(workdir);
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const request = HermesTaskRequestSchema.parse({
+        request_id: "req_spawnfail_1",
+        session_id: session.session_id,
+        execution_id: "exec_spawnfail_1",
+        objective: "never runs",
+        workdir,
+        allowed_tools: [],
+        allowed_actions: ["read"],
+        timeout_seconds: 5,
+        output_dir: outputDir,
+        metadata: { mission_id: "m", run_id: "r", step_id: "s" },
+      });
+
+      await expect(adapter.send_task(session.session_id, request)).rejects.toThrow();
+
+      // Watchers keyed to the caller-supplied execution id must terminate
+      // instead of parking forever on a run whose worker never spawned.
+      const seen: string[] = [];
+      for await (const event of adapter.read_events(session.session_id, "exec_spawnfail_1")) {
+        seen.push(event.type);
+      }
+      expect(seen[seen.length - 1]).toBe("task.failed");
+
+      // The rejected completion promise has no consumer on this path; give
+      // the microtask queue a beat and assert nothing surfaced unhandled.
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
 });
