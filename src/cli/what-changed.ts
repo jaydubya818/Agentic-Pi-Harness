@@ -11,5 +11,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.error("usage: what-changed <effects.jsonl>");
     process.exit(2);
   }
-  whatChanged(effectLogPath).then((s) => console.log(s));
+  whatChanged(effectLogPath).then(
+    (s) => console.log(s),
+    (error) => {
+      // Match the replay/verify CLI contract: clean FAIL line + exit 1
+      // instead of an unhandled-rejection stack trace.
+      console.error(`FAIL: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    },
+  );
 }
