@@ -37,6 +37,25 @@ setTimeout(() => { process.stdout.write(b.subarray(4)); process.exit(0); }, 100)
     expect(output).not.toContain("\uFFFD");
   });
 
+  it("does not resolve PATH lookups to directories (X_OK passes on dirs)", async () => {
+    const { mkdtemp, mkdir, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const base = await mkdtemp(join(tmpdir(), "pi-transport-path-"));
+    try {
+      await mkdir(join(base, "dir-named-like-cmd"));
+      expect(__testables.resolveExecutable("dir-named-like-cmd", { PATH: base })).toBeNull();
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  it("does not resolve an empty command to a PATH directory", () => {
+    // join(dir, "") === dir, so an empty command used to resolve to the
+    // first searchable PATH entry itself.
+    expect(__testables.resolveExecutable("", { PATH: "/usr/bin" })).toBeNull();
+  });
+
   it("still reports real exit codes for commands that run", async () => {
     const transport = spawnHermesTransport({
       command: process.execPath,
