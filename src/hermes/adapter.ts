@@ -291,6 +291,23 @@ export class HermesAdapter {
       session.lastResult = result;
       session.record.status = "idle";
       await safeWriteJson(join(session.record.runtime_dir, "session.json"), session.record);
+      // Emit a terminal event so read_events watchers keyed to this
+      // execution terminate instead of parking forever on a run whose
+      // worker never spawned.
+      await this.pushEvent(session, {
+        type: "task.failed",
+        session_id: sessionId,
+        execution_id: executionId,
+        at: new Date().toISOString(),
+        data: {
+          error: result.error,
+          spawn_failed: true,
+        },
+      });
+      // Nothing awaits the completion promise on this path (collect_result
+      // was never reachable), so mark the rejection handled before
+      // rejecting or Node terminates the harness with an unhandledRejection.
+      active.completion.catch(() => { /* settled via the thrown error below */ });
       active.reject(error);
       throw error;
     }
