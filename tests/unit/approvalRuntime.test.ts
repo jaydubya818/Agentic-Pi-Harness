@@ -149,6 +149,51 @@ describe("approval runtime", () => {
     expect(decision.actor).toBe("human");
   });
 
+  it("does not surface an unhandled rejection when the requester rejects after the timeout", async () => {
+    const packet = createApprovalPacket({ sessionId: "s1", decision: askDecision(), toolName: "write_file", timeoutMs: 10, requestedAt: "2026-04-10T00:00:01Z" });
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const decision = await requestApprovalDecision({
+        packet,
+        requester: {
+          // Rejects in response to the abort sent on timeout — i.e. after
+          // losing the race, when nothing is awaiting this promise anymore.
+          request: (_packet, signal) => new Promise((_, reject) => {
+            signal.addEventListener("abort", () => reject(new Error("requester aborted")), { once: true });
+          }),
+        },
+        timeoutMs: 10,
+        decidedAt: () => "2026-04-10T00:00:07Z",
+      });
+
+      expect(decision.outcome).toBe("timeout");
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("fails closed to deny when the requester throws synchronously", async () => {
+    const packet = createApprovalPacket({ sessionId: "s1", decision: askDecision(), toolName: "write_file", timeoutMs: 50, requestedAt: "2026-04-10T00:00:01Z" });
+
+    const decision = await requestApprovalDecision({
+      packet,
+      requester: {
+        request: () => { throw new Error("sync approval crash"); },
+      },
+      timeoutMs: 50,
+      decidedAt: () => "2026-04-10T00:00:08Z",
+    });
+
+    expect(decision.outcome).toBe("deny");
+    expect(decision.actor).toBe("system");
+    expect(decision.reason).toContain("sync approval crash");
+  });
+
   it("mediates ask decisions into final approve/deny outcomes", () => {
     const approved = applyApprovalDecision(askDecision(), {
       packetId: "t1:approval",
