@@ -82,9 +82,17 @@ export async function requestApprovalDecision(input: {
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
     let raced: ApprovalResponse | typeof timedOut;
+    const requester = input.requester;
+    // The async wrapper converts a synchronously-throwing requester into a
+    // rejection so it still fails closed via the catch below.
+    const requestPromise = (async () => requester.request(input.packet, abortController.signal))();
+    // A requester that rejects *after* losing the race (e.g. it throws in
+    // response to the abort we send on timeout) must not surface as an
+    // unhandled rejection; the timeout outcome below already covers it.
+    requestPromise.catch(() => { /* handled via race or timeout outcome */ });
     try {
       raced = await Promise.race([
-        input.requester.request(input.packet, abortController.signal),
+        requestPromise,
         new Promise<typeof timedOut>((resolve) => {
           timeoutHandle = setTimeout(() => resolve(timedOut), input.timeoutMs);
         }),
