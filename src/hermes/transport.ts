@@ -133,6 +133,11 @@ export function spawnHermesTransport(input: SpawnHermesTransportInput): HermesTr
     cwd: input.cwd,
     env: input.env,
     stdio: ["ignore", "pipe", "pipe"],
+    // Own process group on POSIX (matching the script transport) so
+    // killChild's group kill reaps the whole worker tree. Without it the
+    // group kill hits ESRCH, only the direct child dies, and descendants
+    // spawned by the worker survive cancel/timeout as orphans.
+    detached: process.platform !== "win32",
   });
 
   return new SubprocessHermesTransport(child);
