@@ -579,8 +579,14 @@ export class HermesBridgeServer {
             },
           });
         }
-      })().catch(() => {
-        stopped = true;
+      })().catch((error) => {
+        // A failed heartbeat emit must not flip the shared `stopped` flag:
+        // that silently disabled the stuck-run watchdog (and all future
+        // heartbeats) after one transient persist error. Log and keep going.
+        this.logger.log("warn", "hermes.bridge.heartbeat_emit_failed", {
+          executionId: run.accepted.execution_id,
+          error: String(error),
+        });
       });
     }, this.heartbeatIntervalMs);
 
@@ -591,10 +597,18 @@ export class HermesBridgeServer {
         const lastProgressAt = (run as HermesBridgeRunRecord & { __lastProgressAt?: number }).__lastProgressAt ?? 0;
         if (Date.now() - lastProgressAt < this.stuckTimeoutMs) return;
         stopped = true;
-        await this.adapter.cancel(run.session.session_id, run.accepted.execution_id);
+        try {
+          await this.adapter.cancel(run.session.session_id, run.accepted.execution_id);
+        } catch {
+          // The session or worker may already be gone; the run must still be
+          // settled as stuck below instead of staying non-terminal forever.
+        }
         await this.failV2Run(run, "failed", "stuck_run", "semantic heartbeat missing beyond supervisor threshold");
-      })().catch(() => {
-        stopped = true;
+      })().catch((error) => {
+        this.logger.log("error", "hermes.bridge.stuck_watchdog_failed", {
+          executionId: run.accepted.execution_id,
+          error: String(error),
+        });
       });
     }, Math.max(250, Math.floor(this.stuckTimeoutMs / 4)));
 
