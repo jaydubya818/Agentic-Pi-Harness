@@ -155,6 +155,16 @@ describe("KB access policy V1", () => {
     expect(text).not.toContain('"rewrite"');
   });
 
+  it("requires frontmatter for every markdown extension, including .markdown", async () => {
+    const roots = await createRoots();
+    for (const name of ["note.md", "note.mdown", "note.markdown", "note.MD"]) {
+      const info = classifyKnowledgePath(join(roots.agenticKbRoot, "staging/normalized", name), roots);
+      expect(info.requiresFrontmatter, name).toBe(true);
+    }
+    const nonMarkdown = classifyKnowledgePath(join(roots.agenticKbRoot, "staging/normalized", "note.txt"), roots);
+    expect(nonMarkdown.requiresFrontmatter).toBe(false);
+  });
+
   it("classifies dot-dot-prefixed names inside a root as inside that root", async () => {
     const roots = await createRoots();
     const weird = join(roots.agenticKbRoot, "..weird.md");
