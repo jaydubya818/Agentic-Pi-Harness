@@ -109,6 +109,34 @@ describe("PI_HERMES_CONTRACT_V2 golden mission", () => {
     }
   }, 20000);
 
+  it("still settles a stuck run as failed when cancelling the hung worker throws", async () => {
+    const workdir = await makeTempDir("pi-hermes-v2-work-");
+    const artifactRoot = await makeTempDir("pi-hermes-v2-artifacts-");
+    const stateRoot = await makeTempDir("pi-hermes-v2-state-");
+    const server = createContractServer(stateRoot, { emitSemanticHeartbeats: true, stuckTimeoutMs: 600 });
+    // Simulate the session/worker being unreachable at cancel time (e.g. the
+    // adapter process died): the watchdog must still mark the run stuck.
+    const internals = server as unknown as { adapter: { cancel(sessionId: string, executionId?: string): Promise<void> } };
+    internals.adapter.cancel = async () => {
+      throw new Error("session already gone");
+    };
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    try {
+      const { sessionId } = await createSession(base, workdir);
+      // Short worker timeout so the adapter's own budget reaps the hung
+      // worker (cancel is broken in this scenario) and stop() can settle.
+      const executionId = await executeGoldenMission(base, sessionId, artifactRoot, "__STUCK__ simulate hung worker", 3);
+      const run = await waitForRun(base, executionId, 10000);
+
+      expect(run.state).toBe("failed");
+      expect(run.failure_class).toBe("stuck_run");
+    } finally {
+      await server.stop();
+    }
+  }, 20000);
+
   it("does not flag a streaming worker as stuck even without supervisor heartbeats", async () => {
     const workdir = await makeTempDir("pi-hermes-v2-work-");
     const artifactRoot = await makeTempDir("pi-hermes-v2-artifacts-");
