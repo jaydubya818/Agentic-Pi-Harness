@@ -63,6 +63,36 @@ describe("HermesAdapter", () => {
     expect(eventLog).toContain("task.completed");
   }, 15000);
 
+  it("captures the trailing session footer, not a mid-output session_id mention", async () => {
+    const workdir = await makeTempDir("pi-hermes-work-");
+    const outputDir = await makeTempDir("pi-hermes-out-");
+    const adapter = await createAdapter();
+    const session = await adapter.start_session(workdir);
+
+    const request = HermesTaskRequestSchema.parse({
+      request_id: "req_test_decoy_session",
+      session_id: session.session_id,
+      objective: "__DECOY_SESSION__ mention session ids mid-output.",
+      workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["read"],
+      timeout_seconds: 10,
+      output_dir: outputDir,
+      metadata: {
+        mission_id: "mission-decoy",
+        run_id: "run-decoy",
+        step_id: "step-decoy",
+      },
+    });
+
+    await adapter.send_task(session.session_id, request);
+    const result = await adapter.collect_result(session.session_id);
+
+    expect(result.status).toBe("completed");
+    // The adapter mutates the session record it returned from start_session.
+    expect(session.hermes_session_id).toBe("fake-hermes-session");
+  }, 15000);
+
   it("interrupts an active Hermes task", async () => {
     const workdir = await makeTempDir("pi-hermes-work-");
     const outputDir = await makeTempDir("pi-hermes-out-");

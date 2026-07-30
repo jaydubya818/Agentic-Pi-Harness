@@ -15,6 +15,7 @@ const outputDir = outputDirMatch ? outputDirMatch[1].trim() : null;
 const slow = query.includes("__SLOW__");
 const fail = query.includes("__FAIL__");
 const noisy = query.includes("__NOISY__");
+const decoySession = query.includes("__DECOY_SESSION__");
 
 async function finish(code = 0, error = null) {
   let artifacts = [];
@@ -55,6 +56,13 @@ process.on("SIGTERM", async () => {
 });
 
 (async () => {
+  if (decoySession) {
+    console.log("session_id: decoy-mid-output");
+    console.log("prefix session_id: decoy-trailing-text more words");
+    await finish(0, null);
+    return;
+  }
+
   if (fail) {
     await finish(3, "fake hermes failure");
     return;

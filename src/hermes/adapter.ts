@@ -644,8 +644,15 @@ function stripBackspaceArtifacts(value: string): string {
 }
 
 function parseHermesSessionId(output: string): string | null {
-  const match = output.match(/(?:^|\n)session_id:\s*(\S+)/);
-  return match ? match[1] : null;
+  // Only a full `session_id: <id>` line counts, and the *last* one wins: the
+  // genuine footer is emitted at the very end of the stream. Worker output
+  // that merely mentions "session_id: x" mid-run (echoed env, logs, or
+  // hostile text) must not be captured and resumed on the next task.
+  let last: string | null = null;
+  for (const match of output.matchAll(/(?:^|\n)session_id:[ \t]*(\S+)[ \t]*(?=\n|$)/g)) {
+    last = match[1];
+  }
+  return last;
 }
 
 function removeHermesSessionFooter(output: string): string {
