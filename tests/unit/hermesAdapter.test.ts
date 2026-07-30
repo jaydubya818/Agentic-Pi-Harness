@@ -93,6 +93,44 @@ describe("HermesAdapter", () => {
     expect(session.hermes_session_id).toBe("fake-hermes-session");
   }, 15000);
 
+  it("settles the run with a failure instead of crashing when exit finalization throws", async () => {
+    const workdir = await makeTempDir("pi-hermes-work-");
+    const outputDir = await makeTempDir("pi-hermes-out-");
+    const adapter = await createAdapter();
+    const session = await adapter.start_session(workdir);
+
+    const makeRequest = (requestId: string) => HermesTaskRequestSchema.parse({
+      request_id: requestId,
+      session_id: session.session_id,
+      objective: "Quick task.",
+      workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["read"],
+      timeout_seconds: 10,
+      output_dir: outputDir,
+      metadata: { mission_id: "mission-finalize", run_id: "run-finalize", step_id: "step-finalize" },
+    });
+
+    const internals = adapter as unknown as { pushEvent: (...args: unknown[]) => Promise<void> };
+    const originalPushEvent = internals.pushEvent.bind(adapter);
+
+    await adapter.send_task(session.session_id, makeRequest("req_finalize_fail"));
+    // Sabotage event persistence: the terminal-event push inside handleExit
+    // now throws. Previously that rejection escaped a bare `void` call as an
+    // unhandledRejection and the completion promise never settled.
+    internals.pushEvent = async () => {
+      throw new Error("simulated event log failure");
+    };
+
+    await expect(adapter.collect_result(session.session_id)).rejects.toThrow("simulated event log failure");
+
+    // The session must be released so the next task can run.
+    internals.pushEvent = originalPushEvent;
+    await adapter.send_task(session.session_id, makeRequest("req_finalize_recover"));
+    const result = await adapter.collect_result(session.session_id);
+    expect(result.status).toBe("completed");
+  }, 15000);
+
   it("interrupts an active Hermes task", async () => {
     const workdir = await makeTempDir("pi-hermes-work-");
     const outputDir = await makeTempDir("pi-hermes-out-");

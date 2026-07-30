@@ -256,7 +256,32 @@ export class HermesAdapter {
           .catch(() => { /* per-chunk append failure; keep draining */ });
       });
       transport.onExit((event) => {
-        void this.handleExit(session, active, event.exitCode, event.signal);
+        void this.handleExit(session, active, event.exitCode, event.signal).catch(async (error) => {
+          // A failure while finalizing the exited run (result write, event
+          // append) must not surface as an unhandledRejection that kills the
+          // harness, and the completion promise must still settle so
+          // collect_result callers see the failure instead of parking.
+          this.logger.child({ sessionId, executionId }).log("error", "hermes.task.exit_finalize_failed", {
+            error: String(error),
+          });
+          if (session.active === active) {
+            session.active = null;
+            session.record.status = "idle";
+          }
+          try {
+            await this.pushEvent(session, {
+              type: "task.failed",
+              session_id: sessionId,
+              execution_id: executionId,
+              at: new Date().toISOString(),
+              data: { error: String(error), finalize_failed: true },
+            });
+          } catch {
+            // best-effort terminal event; the rejection below is authoritative
+          }
+          active.completion.catch(() => { /* settled via rejection below */ });
+          active.reject(error);
+        });
       });
 
       active.timeoutHandle = setTimeout(() => {
