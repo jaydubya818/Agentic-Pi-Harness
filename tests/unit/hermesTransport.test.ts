@@ -68,6 +68,52 @@ setTimeout(() => { process.stdout.write(b.subarray(4)); process.exit(0); }, 100)
     expect(exit.exitCode).toBe(3);
   });
 
+  it("kills worker-spawned descendants when the subprocess transport is killed", async () => {
+    if (process.platform === "win32") return;
+    const script = `
+const cp = require("node:child_process").spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"]);
+console.log("GRANDCHILD=" + cp.pid);
+setInterval(() => {}, 1000);`;
+    const transport = spawnHermesTransport({
+      command: process.execPath,
+      args: ["-e", script],
+      cwd: process.cwd(),
+      env: process.env,
+      prefer: "subprocess",
+    });
+    const grandchildPid = await new Promise<number>((resolve, reject) => {
+      let output = "";
+      const timer = setTimeout(() => reject(new Error("no grandchild pid announced")), 5000);
+      transport.onOutput((chunk) => {
+        output += chunk;
+        const match = output.match(/GRANDCHILD=(\d+)/);
+        if (match) {
+          clearTimeout(timer);
+          resolve(Number(match[1]));
+        }
+      });
+    });
+
+    transport.kill("SIGTERM");
+    await waitForExit(transport);
+
+    const deadline = Date.now() + 2000;
+    let alive = true;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(grandchildPid, 0);
+      } catch {
+        alive = false;
+        break;
+      }
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    }
+    if (alive) {
+      try { process.kill(grandchildPid, "SIGKILL"); } catch { /* cleanup */ }
+    }
+    expect(alive).toBe(false);
+  }, 10000);
+
   it("builds util-linux script args on linux (BSD form silently runs a shell instead)", () => {
     const args = __testables.buildScriptPtyArgs("/usr/bin/hermes", ["chat", "-q", "hello world"], "linux");
     expect(args).toEqual(["-qefc", "'/usr/bin/hermes' 'chat' '-q' 'hello world'", "/dev/null"]);
