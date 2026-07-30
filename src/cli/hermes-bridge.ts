@@ -24,7 +24,11 @@ function parseArgs(argv: string[]): BridgeArgs {
       args.host = next;
       i += 1;
     } else if (arg === "--port" && next) {
-      args.port = Number(next);
+      const port = Number(next);
+      if (!Number.isInteger(port) || port < 0 || port > 65535) {
+        throw new Error(`invalid --port value: ${JSON.stringify(next)} (expected an integer 0-65535)`);
+      }
+      args.port = port;
       i += 1;
     } else if (arg === "--command" && next) {
       args.command = next;
@@ -69,6 +73,8 @@ export async function runHermesBridgeCli(argv: string[] = process.argv.slice(2))
   process.on("SIGINT", () => { void shutdown(); });
   process.on("SIGTERM", () => { void shutdown(); });
 }
+
+export const __testables = { parseArgs };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   runHermesBridgeCli().catch((error) => {

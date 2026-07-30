@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { replayTape } from "../../src/cli/replay.js";
 import { whatChanged } from "../../src/cli/what-changed.js";
 import { inspectPolicy } from "../../src/cli/inspect.js";
+import { __testables as hermesBridgeTestables } from "../../src/cli/hermes-bridge.js";
 import { ReplayRecorder } from "../../src/replay/recorder.js";
 import { appendEffectRecord } from "../../src/effect/recorder.js";
 import { appendPolicyDecision, placeholderApprove } from "../../src/policy/decision.js";
@@ -76,5 +77,15 @@ describe("thin CLIs", () => {
     const output = await inspectPolicy(path);
     expect(output).toContain("tool-1 approve provenance=placeholder");
     expect(output).toContain("policyDigest=sha256:policy-test");
+  });
+});
+
+describe("hermes-bridge cli args", () => {
+  it("rejects non-numeric and out-of-range --port values with a clean error", () => {
+    expect(() => hermesBridgeTestables.parseArgs(["--port", "abc"])).toThrow(/invalid --port/);
+    expect(() => hermesBridgeTestables.parseArgs(["--port", "70000"])).toThrow(/invalid --port/);
+    expect(() => hermesBridgeTestables.parseArgs(["--port", "8.5"])).toThrow(/invalid --port/);
+    expect(hermesBridgeTestables.parseArgs(["--port", "8080"]).port).toBe(8080);
+    expect(hermesBridgeTestables.parseArgs([]).port).toBe(8787);
   });
 });
