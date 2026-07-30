@@ -178,6 +178,34 @@ describe("PI_HERMES_CONTRACT_V2 golden mission", () => {
     }
   }, 20000);
 
+  it("rejects a duplicate execution_id instead of overwriting the existing run record", async () => {
+    const workdir = await makeTempDir("pi-hermes-v2-work-");
+    const artifactRoot = await makeTempDir("pi-hermes-v2-artifacts-");
+    const stateRoot = await makeTempDir("pi-hermes-v2-state-");
+    const server = createContractServer(stateRoot);
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    try {
+      const { sessionId } = await createSession(base, workdir);
+      const first = await executeGoldenMissionRaw(base, sessionId, artifactRoot, "duplicate id first run", 20, "exec_dup_test");
+      expect(first.status).toBe(202);
+      await first.json();
+      await waitForRun(base, "exec_dup_test");
+
+      const retry = await executeGoldenMissionRaw(base, sessionId, artifactRoot, "duplicate id retry", 20, "exec_dup_test");
+      expect(retry.status).toBe(400);
+      const retryBody = await retry.json() as { error: string };
+      expect(retryBody.error).toContain("duplicate execution_id");
+
+      // The original run record is untouched by the rejected retry.
+      const run = await waitForRun(base, "exec_dup_test");
+      expect(run.state).toBe("succeeded");
+    } finally {
+      await server.stop();
+    }
+  }, 20000);
+
   it("fails malformed worker result payloads as contract errors", async () => {
     const workdir = await makeTempDir("pi-hermes-v2-work-");
     const artifactRoot = await makeTempDir("pi-hermes-v2-artifacts-");
@@ -227,14 +255,20 @@ async function createSession(base: string, workdir: string): Promise<{ sessionId
   return { sessionId: session.session_id };
 }
 
-async function executeGoldenMission(base: string, sessionId: string, artifactRoot: string, marker: string, timeoutSeconds = 20): Promise<string> {
+async function executeGoldenMission(base: string, sessionId: string, artifactRoot: string, marker: string, timeoutSeconds = 20, executionId?: string): Promise<string> {
+  const response = await executeGoldenMissionRaw(base, sessionId, artifactRoot, marker, timeoutSeconds, executionId);
+  const accepted = await response.json() as { execution_id: string };
+  return accepted.execution_id;
+}
+
+async function executeGoldenMissionRaw(base: string, sessionId: string, artifactRoot: string, marker: string, timeoutSeconds = 20, executionId?: string): Promise<Response> {
   const body = {
     schema_version: "2.0",
     request_id: `req_${Date.now()}`,
     run_id: `run_${Date.now()}`,
     mission_id: `mission_${Date.now()}`,
     session_id: sessionId,
-    execution_id: `exec_${Date.now()}`,
+    execution_id: executionId ?? `exec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     task_type: "repo_inspection",
     goal: `Golden mission ${marker}`,
     instructions: [
@@ -301,13 +335,11 @@ async function executeGoldenMission(base: string, sessionId: string, artifactRoo
     },
   };
 
-  const response = await fetch(`${base}/execute`, {
+  return fetch(`${base}/execute`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  const accepted = await response.json() as { execution_id: string };
-  return accepted.execution_id;
 }
 
 async function waitForRun(base: string, executionId: string, timeoutMs = 15000): Promise<any> {
