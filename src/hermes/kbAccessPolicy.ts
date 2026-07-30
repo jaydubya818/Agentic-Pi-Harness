@@ -210,7 +210,9 @@ export function classifyKnowledgePath(path: string, rootsInput: Partial<Knowledg
     else pathClass = "kb_other";
   }
 
-  const markdown = /\.md(?:own)?$/i.test(resolvedPath);
+  // All common markdown extensions count: .markdown previously slipped past
+  // frontmatter enforcement entirely while .md and .mdown were validated.
+  const markdown = /\.(?:md|mdown|markdown)$/i.test(resolvedPath);
   return {
     path: resolvedPath,
     roots,
