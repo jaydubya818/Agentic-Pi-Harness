@@ -120,5 +120,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const id = await runGoldenPath(parsed.workdir, parsed.outRoot, { tracePath: parsed.tracePath });
     console.log("session " + id);
     if (parsed.tracePath) console.log("trace " + parsed.tracePath);
-  })();
+  })().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
 }
