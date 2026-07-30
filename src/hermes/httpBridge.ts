@@ -426,10 +426,25 @@ export class HermesBridgeServer {
     });
   }
 
+  /**
+   * Run records are keyed by execution_id in memory and on disk. Accepting a
+   * caller-supplied id that already exists (a client retry, or a collision
+   * from another session) would silently overwrite the existing run record
+   * in `this.runs` and interleave its persisted event log with the old run.
+   */
+  private assertNewExecutionId(executionId: string): void {
+    if (this.runs.has(executionId)) {
+      throw new Error(`duplicate execution_id: ${executionId}`);
+    }
+  }
+
   private async executeLegacy(request: HermesTaskRequest) {
     const session = this.sessions.get(request.session_id);
     if (!session) throw new Error(`unknown session_id: ${request.session_id}`);
-    if (request.execution_id) assertSafeStateIdSegment(request.execution_id, "execution_id");
+    if (request.execution_id) {
+      assertSafeStateIdSegment(request.execution_id, "execution_id");
+      this.assertNewExecutionId(request.execution_id);
+    }
     if (this.enforceKnowledgePolicy) {
       const info = classifyKnowledgePath(request.output_dir, this.knowledgeRoots);
       if (!["wiki", "kb_discovery", "kb_handoff_inbound", "kb_mission_outputs"].includes(info.pathClass)) {
@@ -457,6 +472,7 @@ export class HermesBridgeServer {
     const session = this.sessions.get(task.session_id);
     if (!session) throw new Error(`unknown session_id: ${task.session_id}`);
     assertSafeStateIdSegment(task.execution_id, "execution_id");
+    this.assertNewExecutionId(task.execution_id);
 
     if (this.enforceKnowledgePolicy) {
       await this.preflightV2KnowledgePolicy(task);
