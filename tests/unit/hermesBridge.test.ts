@@ -460,6 +460,20 @@ describe("HermesBridgeServer", () => {
 
       const numericExecutionId = await post("/cancel", { execution_id: 123 });
       expect(numericExecutionId.status).toBe(400);
+
+      const stringEnv = await post("/sessions", { workdir: "/tmp", env: "PATH=/evil" });
+      expect(stringEnv.status).toBe(400);
+      expect(((await stringEnv.json()) as { error: string }).error).toContain("env");
+
+      const arrayEnv = await post("/sessions", { workdir: "/tmp", env: ["PATH=/evil"] });
+      expect(arrayEnv.status).toBe(400);
+
+      const nonStringEnvValue = await post("/sessions", { workdir: "/tmp", env: { DEBUG: 1 } });
+      expect(nonStringEnvValue.status).toBe(400);
+
+      const numericProfile = await post("/sessions", { workdir: "/tmp", profile: 7 });
+      expect(numericProfile.status).toBe(400);
+      expect(((await numericProfile.json()) as { error: string }).error).toContain("profile");
     } finally {
       await server.stop();
     }

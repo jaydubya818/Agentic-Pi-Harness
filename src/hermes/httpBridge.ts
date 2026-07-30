@@ -236,6 +236,22 @@ export class HermesBridgeServer {
       if (typeof body.workdir !== "string" || body.workdir.length === 0) {
         throw new BridgeRequestError(400, "workdir must be a non-empty string");
       }
+      if (body.env !== undefined) {
+        // Spreading a non-object (a string spreads its indexed characters,
+        // an array its elements) would silently poison the worker's
+        // environment with numeric-key garbage instead of failing.
+        if (typeof body.env !== "object" || body.env === null || Array.isArray(body.env)) {
+          throw new BridgeRequestError(400, "env must be an object mapping names to string values");
+        }
+        for (const [name, value] of Object.entries(body.env)) {
+          if (typeof value !== "string") {
+            throw new BridgeRequestError(400, `env value for ${JSON.stringify(name)} must be a string`);
+          }
+        }
+      }
+      if (body.profile !== undefined && (typeof body.profile !== "string" || body.profile.length === 0)) {
+        throw new BridgeRequestError(400, "profile must be a non-empty string");
+      }
       const session = await this.adapter.start_session(body.workdir, {
         env: body.env,
         profile: body.profile,
