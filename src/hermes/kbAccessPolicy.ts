@@ -552,9 +552,11 @@ function ensureTrailingNewline(content: string): string {
 }
 
 function extractFrontmatter(content: string): Record<string, string> | null {
-  const match = content.match(/^---\n([\s\S]*?)\n---\n/);
+  // Tolerate CRLF line endings: a worker-produced artifact with \r\n would
+  // otherwise be denied as "frontmatter missing" despite valid frontmatter.
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
   if (!match) return null;
-  const lines = match[1].split("\n");
+  const lines = match[1].split(/\r?\n/);
   const result: Record<string, string> = {};
   let currentListKey: string | null = null;
   for (const line of lines) {
@@ -592,7 +594,7 @@ function inferCreatedBy(content: string): string | null {
 }
 
 function stripFrontmatter(content: string): string {
-  return content.replace(/^---\n[\s\S]*?\n---\n/, "");
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "");
 }
 
 function classifyDeniedEvent(path: string, roots: Partial<KnowledgeRoots> | undefined, error: string): KnowledgePolicyEventType {
