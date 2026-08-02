@@ -334,6 +334,12 @@ describe("HermesAdapter", () => {
       }
       expect(seen[seen.length - 1]).toBe("task.failed");
 
+      // The persisted event log must also terminate: task.started with no
+      // terminal record would look like a run that never finished.
+      const eventLog = await readFile(join(outputDir, ".pi-hermes", "events.jsonl"), "utf8");
+      const persistedTypes = eventLog.trim().split("\n").map((line) => JSON.parse(line).type);
+      expect(persistedTypes[persistedTypes.length - 1]).toBe("task.failed");
+
       // The rejected completion promise has no consumer on this path; give
       // the microtask queue a beat and assert nothing surfaced unhandled.
       await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
