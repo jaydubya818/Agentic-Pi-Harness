@@ -312,13 +312,12 @@ export class HermesAdapter {
         structured_output: false,
       });
       await safeWriteJson(resultPath, result);
-      session.active = null;
-      session.lastResult = result;
-      session.record.status = "idle";
-      await safeWriteJson(join(session.record.runtime_dir, "session.json"), session.record);
       // Emit a terminal event so read_events watchers keyed to this
       // execution terminate instead of parking forever on a run whose
-      // worker never spawned.
+      // worker never spawned. This must happen while session.active is
+      // still set: pushEvent only appends to the execution's on-disk
+      // events.jsonl for the active execution, and the persisted log
+      // otherwise records task.started with no terminal event.
       await this.pushEvent(session, {
         type: "task.failed",
         session_id: sessionId,
@@ -329,6 +328,10 @@ export class HermesAdapter {
           spawn_failed: true,
         },
       });
+      session.active = null;
+      session.lastResult = result;
+      session.record.status = "idle";
+      await safeWriteJson(join(session.record.runtime_dir, "session.json"), session.record);
       // Nothing awaits the completion promise on this path (collect_result
       // was never reachable), so mark the rejection handled before
       // rejecting or Node terminates the harness with an unhandledRejection.
