@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HermesAdapter } from "../../src/hermes/adapter.js";
+import { HermesAdapter, __adapterTestables } from "../../src/hermes/adapter.js";
 import { HermesTaskRequestSchema } from "../../src/hermes/contracts.js";
 
 const createdPaths: string[] = [];
@@ -294,6 +294,25 @@ describe("HermesAdapter", () => {
     const result = await second;
     expect(result.status).toBe("cancelled");
   }, 15000);
+
+  it.skipIf(typeof process.getuid === "function" && process.getuid() === 0)(
+    "keeps artifacts from readable directories when a subdirectory is unreadable",
+    async () => {
+      const { chmod, mkdir, writeFile } = await import("node:fs/promises");
+      const outputDir = await makeTempDir("pi-hermes-artifacts-");
+      await writeFile(join(outputDir, "report.md"), "# hi\n", "utf8");
+      const locked = join(outputDir, "locked");
+      await mkdir(locked);
+      await writeFile(join(locked, "hidden.txt"), "secret\n", "utf8");
+      await chmod(locked, 0o000);
+      try {
+        const artifacts = await __adapterTestables.detectArtifacts(outputDir);
+        expect(artifacts.map((artifact) => artifact.path)).toEqual([resolve(join(outputDir, "report.md"))]);
+      } finally {
+        await chmod(locked, 0o755);
+      }
+    },
+  );
 
   it("settles watchers and the completion promise when spawn setup fails", async () => {
     const workdir = await makeTempDir("pi-hermes-work-");

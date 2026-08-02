@@ -712,7 +712,14 @@ async function detectArtifacts(outputDir: string): Promise<z.infer<typeof Hermes
   const artifacts: z.infer<typeof HermesArtifactSchema>[] = [];
 
   async function walk(dir: string): Promise<void> {
-    const entries = await readdir(dir, { withFileTypes: true });
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      // One unreadable subdirectory (permissions, races with cleanup) must
+      // not discard the artifacts already collected from readable ones.
+      return;
+    }
     for (const entry of entries) {
       if (entry.name === ".pi-hermes") continue;
       const fullPath = join(dir, entry.name);
@@ -727,14 +734,12 @@ async function detectArtifacts(outputDir: string): Promise<z.infer<typeof Hermes
     }
   }
 
-  try {
-    await walk(outputDir);
-  } catch {
-    return [];
-  }
+  await walk(outputDir);
 
   return artifacts.sort((a, b) => a.path.localeCompare(b.path));
 }
+
+export const __adapterTestables = { detectArtifacts };
 
 function inferArtifactType(fileName: string): string {
   if (fileName.endsWith(".patch") || fileName.endsWith(".diff")) return "patch";
