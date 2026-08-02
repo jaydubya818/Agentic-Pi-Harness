@@ -172,15 +172,23 @@ export class HermesBridgeStateStore {
   }
 
   private async loadRunEvents(executionId: string): Promise<BridgeEventRecord[]> {
+    let raw: string;
     try {
-      const raw = await readFile(this.eventsPath(executionId), "utf8");
-      return raw
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => parseBridgeEvent(JSON.parse(line)));
+      raw = await readFile(this.eventsPath(executionId), "utf8");
     } catch {
       return [];
     }
+    const events: BridgeEventRecord[] = [];
+    for (const line of raw.split("\n")) {
+      if (!line) continue;
+      try {
+        events.push(parseBridgeEvent(JSON.parse(line)));
+      } catch {
+        // One torn/corrupt line (e.g. a crash mid-append) must not drop
+        // every other persisted event for the run.
+      }
+    }
+    return events;
   }
 
   private sessionsDir(): string {
