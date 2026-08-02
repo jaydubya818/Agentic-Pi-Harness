@@ -4,11 +4,13 @@ import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { HermesBridgeServer } from "../../src/hermes/httpBridge.js";
 import {
+  assertRequiredFrontmatter,
   classifyKnowledgePath,
   createKnowledgeTombstone,
   deleteKnowledgePath,
   ensureKnowledgeDirectorySkeleton,
   ensureMissionRunSkeleton,
+  hasFrontmatter,
   promoteKnowledgeCandidate,
   writeKnowledgeJson,
   writeKnowledgeText,
@@ -163,6 +165,26 @@ describe("KB access policy V1", () => {
     }
     const nonMarkdown = classifyKnowledgePath(join(roots.agenticKbRoot, "staging/normalized", "note.txt"), roots);
     expect(nonMarkdown.requiresFrontmatter).toBe(false);
+  });
+
+  it("accepts CRLF line endings in required frontmatter", () => {
+    const fields = [
+      "id: kb-note-1",
+      "trust: canonical",
+      "created_by: hermes",
+      "created_at: 2026-08-02T00:00:00Z",
+      "mission_id: mission-1",
+      "run_id: run-1",
+      "source_paths:",
+      "  - /tmp/source.md",
+      "status: promoted",
+    ];
+    const crlf = ["---", ...fields, "---", "", "# Note", ""].join("\r\n");
+    expect(hasFrontmatter(crlf)).toBe(true);
+    expect(() => assertRequiredFrontmatter(crlf, "/tmp/note.md")).not.toThrow();
+
+    const lf = ["---", ...fields, "---", "", "# Note", ""].join("\n");
+    expect(() => assertRequiredFrontmatter(lf, "/tmp/note.md")).not.toThrow();
   });
 
   it("classifies dot-dot-prefixed names inside a root as inside that root", async () => {
