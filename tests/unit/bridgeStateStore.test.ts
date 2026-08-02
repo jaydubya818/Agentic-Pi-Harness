@@ -30,6 +30,56 @@ describe("HermesBridgeStateStore", () => {
     expect(denials.map((denial) => denial.code)).toEqual(["one", "two"]);
   });
 
+  it("skips a torn trailing run-event line instead of dropping the whole event log", async () => {
+    const root = await makeTempDir("pi-bridge-state-events-");
+    const store = new HermesBridgeStateStore(root);
+    await store.init();
+    const event = {
+      type: "task.progress" as const,
+      session_id: "sess_x",
+      execution_id: "exec_torn_1",
+      at: "2026-08-02T00:00:00Z",
+      data: {},
+    };
+    await store.appendRunEvent("exec_torn_1", event);
+    // Simulate a crash mid-append: a partial JSON line with no newline.
+    await appendFile(join(root, "runs", "exec_torn_1", "events.jsonl"), '{"type":"task.out', "utf8");
+    await store.persistRun({
+      accepted: { request_id: "req_1", session_id: "sess_x", execution_id: "exec_torn_1", status: "accepted" },
+      request: {
+        request_id: "req_1",
+        session_id: "sess_x",
+        execution_id: "exec_torn_1",
+        objective: "obj",
+        workdir: "/tmp",
+        allowed_tools: [],
+        allowed_actions: ["read"],
+        timeout_seconds: 5,
+        output_dir: "/tmp",
+        metadata: { mission_id: "m", run_id: "r", step_id: "s" },
+      },
+      status: "running",
+      session: {
+        session_id: "sess_x",
+        workdir: "/tmp",
+        profile: null,
+        runtime_dir: "/tmp",
+        hermes_session_id: null,
+        status: "running",
+        created_at: "2026-08-02T00:00:00Z",
+      },
+      events: [event],
+      result: null,
+      error: null,
+    });
+
+    const snapshot = await store.load();
+    const run = snapshot.runs.find((item) => item.accepted.execution_id === "exec_torn_1");
+    expect(run).toBeDefined();
+    expect(run!.events).toHaveLength(1);
+    expect(run!.events[0]).toMatchObject({ type: "task.progress", execution_id: "exec_torn_1" });
+  });
+
   it("refuses execution and session ids that are not safe path segments", async () => {
     for (const bad of ["../escape", "a/b", "a\\b", ".", "..", "a\0b", ""]) {
       expect(() => assertSafeStateIdSegment(bad, "execution_id")).toThrow(/not a safe path segment/);
