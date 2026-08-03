@@ -106,4 +106,24 @@ describe("runHermesDoctor", () => {
     expect(checks.find((check) => check.name === "transport is PTY")?.detail).toBe("pty");
     expect(fetchMock).toHaveBeenCalled();
   });
+
+  it("reports an unreachable bridge as a failing check instead of crashing", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("fetch failed: connect ECONNREFUSED 127.0.0.1:8787");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const checks = await runHermesDoctor({
+      url: "http://127.0.0.1:8787",
+      token: "doctor-secret",
+      timeoutMs: 1_000,
+    });
+
+    const health = checks.find((check) => check.name === "bridge healthz reachable");
+    expect(health?.ok).toBe(false);
+    expect(health?.detail).toContain("unreachable");
+    // The doctor stops at the unreachable bridge rather than issuing more
+    // requests that would each crash the same way.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
