@@ -89,3 +89,32 @@ describe("hermes-bridge cli args", () => {
     expect(hermesBridgeTestables.parseArgs([]).port).toBe(8787);
   });
 });
+
+describe("hermes cli numeric flag validation", () => {
+  it("hermes-run rejects invalid --timeout values with a clean error", async () => {
+    const { __testables } = await import("../../src/cli/hermes-run.js");
+    expect(() => __testables.parseArgs(["--timeout", "abc"])).toThrow(/invalid --timeout/);
+    expect(() => __testables.parseArgs(["--timeout", "0"])).toThrow(/invalid --timeout/);
+    expect(() => __testables.parseArgs(["--timeout", "12.5"])).toThrow(/invalid --timeout/);
+    expect(__testables.parseArgs(["--timeout", "120"]).timeoutSeconds).toBe(120);
+    expect(__testables.parseArgs([]).timeoutSeconds).toBe(900);
+  });
+
+  it("hermes-smoke and hermes-demo reject invalid --timeout values", async () => {
+    const smoke = (await import("../../src/cli/hermes-smoke.js")).__testables;
+    const demo = (await import("../../src/cli/hermes-demo.js")).__testables;
+    expect(() => smoke.parseArgs(["--timeout", "never"])).toThrow(/invalid --timeout/);
+    expect(smoke.parseArgs(["--timeout", "60"]).timeoutSeconds).toBe(60);
+    expect(() => demo.parseArgs(["--timeout", "-5"])).toThrow(/invalid --timeout/);
+    expect(demo.parseArgs(["--timeout", "60"]).timeoutSeconds).toBe(60);
+  });
+
+  it("hermes-doctor rejects invalid --timeout-ms and acceptance rejects invalid --port", async () => {
+    const { parseHermesDoctorArgs } = await import("../../src/cli/hermes-doctor.js");
+    const { parseHermesAcceptanceArgs } = await import("../../src/cli/acceptance-hermes.js");
+    expect(() => parseHermesDoctorArgs(["--timeout-ms", "abc"])).toThrow(/invalid --timeout-ms/);
+    expect(parseHermesDoctorArgs(["--timeout-ms", "5000"]).timeoutMs).toBe(5000);
+    expect(() => parseHermesAcceptanceArgs(["--port", "70000"])).toThrow(/invalid --port/);
+    expect(parseHermesAcceptanceArgs(["--port", "8080"]).port).toBe(8080);
+  });
+});

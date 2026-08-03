@@ -2,6 +2,7 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { detectHermes, HermesAdapter, HermesTaskRequestSchema } from "../hermes/index.js";
+import { parseIntFlag } from "./args.js";
 
 interface DemoArgs {
   workdir: string;
@@ -33,7 +34,7 @@ function parseArgs(argv: string[]): DemoArgs {
       args.objective = next;
       i += 1;
     } else if (arg === "--timeout" && next) {
-      args.timeoutSeconds = Number(next);
+      args.timeoutSeconds = parseIntFlag("--timeout", next, { min: 1, max: 86400 });
       i += 1;
     } else if (arg === "--profile" && next) {
       args.profile = next;
@@ -102,3 +103,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   });
 }
+
+export const __testables = { parseArgs };

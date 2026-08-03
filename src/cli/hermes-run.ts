@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
+import { parseIntFlag } from "./args.js";
 import { detectHermes } from "../hermes/index.js";
 import { runHermesSupervisorTask } from "../orchestration/hermesSupervisor.js";
 
@@ -35,7 +36,7 @@ function parseArgs(argv: string[]): CliArgs {
       args.objective = next;
       i += 1;
     } else if (arg === "--timeout" && next) {
-      args.timeoutSeconds = Number(next);
+      args.timeoutSeconds = parseIntFlag("--timeout", next, { min: 1, max: 86400 });
       i += 1;
     } else if (arg === "--profile" && next) {
       args.profile = next;
@@ -81,3 +82,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   });
 }
+
+export const __testables = { parseArgs };

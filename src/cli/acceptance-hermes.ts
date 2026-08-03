@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { HermesBridgeServer, detectHermes, type HermesAdapterOptions, type KnowledgeRoots } from "../hermes/index.js";
+import { parseIntFlag } from "./args.js";
 import {
   HermesDoctorCheck,
   HermesDoctorOptions,
@@ -50,7 +51,7 @@ export function parseHermesAcceptanceArgs(argv: string[]): HermesAcceptanceOptio
       options.host = next;
       i += 1;
     } else if (arg === "--port" && next) {
-      options.port = Number(next);
+      options.port = parseIntFlag("--port", next, { min: 0, max: 65535 });
       i += 1;
     } else if (arg === "--state-root" && next) {
       options.stateRoot = resolve(next);
