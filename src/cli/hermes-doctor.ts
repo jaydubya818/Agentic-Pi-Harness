@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { detectHermes, ensureKnowledgeDirectorySkeleton, type KnowledgeRoots } from "../hermes/index.js";
+import { parseIntFlag } from "./args.js";
 
 export interface HermesDoctorCheck {
   name: string;
@@ -75,7 +76,7 @@ export function parseHermesDoctorArgs(argv: string[]): HermesDoctorOptions {
       options.workdir = resolve(next);
       i += 1;
     } else if (arg === "--timeout-ms" && next) {
-      options.timeoutMs = Number(next);
+      options.timeoutMs = parseIntFlag("--timeout-ms", next, { min: 1, max: 86400000 });
       i += 1;
     }
   }
