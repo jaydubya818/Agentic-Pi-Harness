@@ -138,6 +138,11 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
           run = await runResponse.json();
           const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(run.status);
           if (terminal && (run.worker_result || run.result)) break;
+          // A terminal run that reports an error but no result payload will
+          // never grow one (spawn failure, torn transport, bridge restart
+          // reconciliation); polling until the deadline would hang the
+          // caller for the full task timeout before failing anyway.
+          if (terminal && run.error) break;
         }
       } catch {
         // A single flaky poll (connection reset, non-JSON error body) must
@@ -158,7 +163,11 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
     }
 
     const result = (run?.worker_result ?? run?.result) as HermesTaskResult | null;
-    if (!result) throw new Error(`bridge run did not produce a result for execution ${accepted.execution_id}`);
+    if (!result) {
+      const status = run?.status ?? "unknown";
+      const suffix = run?.error ? `: ${run.error}` : "";
+      throw new Error(`bridge run did not produce a result for execution ${accepted.execution_id} (status ${status}${suffix})`);
+    }
     await writeFile(resultPath, JSON.stringify(result, null, 2) + "\n", "utf8");
 
     logger.child({ piSessionId, hermesSessionId: adapterSession.session_id, executionId: accepted.execution_id }).log("info", "hermes.supervisor.bridge.completed", {
