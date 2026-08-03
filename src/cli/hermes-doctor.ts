@@ -213,9 +213,14 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
     const deadline = Date.now() + timeoutMs;
     let run: HermesRunResponse | null = null;
     while (Date.now() < deadline) {
-      const runResponse = await fetch(`${url}/runs/${accepted.execution_id}`, { headers: authHeaders });
-      run = await runResponse.json() as HermesRunResponse;
-      if (["completed", "failed", "cancelled", "interrupted"].includes(run.status)) break;
+      try {
+        const runResponse = await fetch(`${url}/runs/${accepted.execution_id}`, { headers: authHeaders });
+        run = await runResponse.json() as HermesRunResponse;
+        if (["completed", "failed", "cancelled", "interrupted"].includes(run.status)) break;
+      } catch {
+        // One flaky poll (connection reset, non-JSON proxy error) must not
+        // crash the doctor while the smoke run is still executing.
+      }
       await sleep(pollIntervalMs);
     }
 

@@ -40,6 +40,7 @@ describe("runHermesDoctor", () => {
     process.env.HERMES_COMMAND = hermesBinary;
     process.env.HERMES_REPO_PATH = repoPath;
 
+    let runPolls = 0;
     const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
@@ -69,6 +70,12 @@ describe("runHermesDoctor", () => {
       }
 
       if (url.endsWith("/runs/exec_doctor")) {
+        runPolls += 1;
+        if (runPolls === 1) {
+          // Transient proxy-style failure: the doctor must keep polling
+          // instead of crashing mid-smoke-test on a non-JSON body.
+          return new Response("bad gateway", { status: 502, headers: { "content-type": "text/plain" } });
+        }
         return new Response(JSON.stringify({ status: "completed" }), { status: 200, headers: { "content-type": "application/json" } });
       }
 
@@ -104,6 +111,7 @@ describe("runHermesDoctor", () => {
     expect(checks.every((check) => check.ok)).toBe(true);
     expect(checks.find((check) => check.name === "bridge execute smoke test completes")?.detail).toBe("completed");
     expect(checks.find((check) => check.name === "transport is PTY")?.detail).toBe("pty");
+    expect(runPolls).toBeGreaterThanOrEqual(2);
     expect(fetchMock).toHaveBeenCalled();
   });
 
