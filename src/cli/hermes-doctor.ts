@@ -109,13 +109,25 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
     detail: token ? tokenFile : "missing token/env",
   });
 
-  const healthResponse = await fetch(`${url}/healthz`);
-  const healthJson = await healthResponse.json() as { ok?: boolean };
+  // A doctor's job is diagnosis: a bridge that is down (connection refused)
+  // or fronted by a proxy returning non-JSON must surface as a failing
+  // check, not crash the whole doctor with a raw fetch error.
+  let healthOk = false;
+  let healthDetail: string;
+  try {
+    const healthResponse = await fetch(`${url}/healthz`);
+    const healthJson = await healthResponse.json().catch(() => ({})) as { ok?: boolean };
+    healthOk = healthResponse.ok && Boolean(healthJson.ok);
+    healthDetail = `${healthResponse.status}`;
+  } catch (error) {
+    healthDetail = `unreachable: ${error instanceof Error ? error.message : String(error)}`;
+  }
   checks.push({
     name: "bridge healthz reachable",
-    ok: healthResponse.ok && Boolean(healthJson.ok),
-    detail: `${healthResponse.status}`,
+    ok: healthOk,
+    detail: healthDetail,
   });
+  if (!healthOk) return checks;
 
   const unauthorizedMeta = await fetch(`${url}/meta`);
   checks.push({
