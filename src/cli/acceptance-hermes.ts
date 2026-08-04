@@ -29,7 +29,7 @@ export interface HermesAcceptanceResult {
 }
 
 export function parseHermesAcceptanceArgs(argv: string[]): HermesAcceptanceOptions {
-  const base = parseHermesDoctorArgs(argv);
+  const base = parseHermesDoctorArgs(argv, ["--command", "--host", "--port", "--state-root", "--embedded", "--external"]);
   const hasUrl = argv.includes("--url");
   const forceEmbedded = argv.includes("--embedded");
   const forceExternal = argv.includes("--external");

@@ -11,3 +11,18 @@ export function parseIntFlag(flag: string, raw: string, range: { min: number; ma
   }
   return value;
 }
+
+/**
+ * Terminal guard for the hermes CLI flag loops. Anything that reaches the
+ * end of an else-if chain and still looks like a flag is either a typo
+ * (`--objectve`) or a known flag whose trailing value is missing. Both
+ * silently fell through before, so a mistyped invocation started a long
+ * governed run with default settings instead of failing at the command line.
+ */
+export function assertKnownFlag(arg: string, knownFlags: string[]): void {
+  if (!arg.startsWith("--")) return;
+  if (knownFlags.includes(arg)) {
+    throw new Error(`flag ${arg} requires a value`);
+  }
+  throw new Error(`unknown flag: ${arg} (known flags: ${knownFlags.join(", ")})`);
+}
