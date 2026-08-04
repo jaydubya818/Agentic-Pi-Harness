@@ -336,6 +336,20 @@ export async function writeKnowledgeJson(input: WriteKnowledgeJsonInput): Promis
     });
     throw error;
   }
+  if (info.requiresFrontmatter) {
+    // Fail closed: a JSON body can never carry the required markdown
+    // frontmatter, so routing a governed .md artifact through the JSON
+    // writer must not become a frontmatter-enforcement bypass.
+    const error = new Error(`markdown KB artifacts require frontmatter and must be written via writeKnowledgeText: ${path}`);
+    await emitPolicyEvent(input.onEvent, info, {
+      type: "kb.frontmatter_validation_failed",
+      actor: input.actor,
+      path,
+      mode,
+      detail: error.message,
+    });
+    throw error;
+  }
   await mkdir(dirname(path), { recursive: true });
   const content = JSON.stringify(input.value, null, 2) + "\n";
   if (mode === "append") await writeAppend(path, content);
