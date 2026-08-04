@@ -207,11 +207,11 @@ export class ReplayRecorder {
     if (!this.handle || this.closed) {
       throw new PiHarnessError("E_TAPE_HASH", "writeEvent before writeHeader or after close", {});
     }
-    this.seq += 1;
+    const seq = this.seq + 1;
     const base = {
       type: "event" as const,
       schemaVersion: 1 as const,
-      seq: this.seq,
+      seq,
       event,
       prevHash: this.prevHash,
     };
@@ -221,12 +221,17 @@ export class ReplayRecorder {
       throw new PiHarnessError("E_TAPE_HASH", "invalid tape event record", { issues: parsed.error.issues });
     }
     const record = parsed.data;
-    this.records.push(record);
-    this.prevHash = recordHash;
     // Append + fsync. O_APPEND guarantees atomic-offset writes; fsync makes
-    // the record durable before we resolve the promise.
+    // the record durable before we resolve the promise. Only advance the
+    // in-memory chain (seq/prevHash/records) once the record is durable:
+    // advancing before a failed append would make every later successful
+    // write chain off a hash that never landed on disk, corrupting the tape
+    // past that line even though those writes reported success.
     await this.handle.appendFile(JSON.stringify(record) + "\n", "utf8");
     await this.handle.sync();
+    this.seq = seq;
+    this.records.push(record);
+    this.prevHash = recordHash;
   }
 
   digest(): string {

@@ -48,6 +48,35 @@ describe("ReplayRecorder append-mode invariants", () => {
     await tape.close();
   });
 
+  it("a failed append does not advance the chain, so later writes keep the tape verifiable", async () => {
+    const { path, tape } = await fresh();
+    await tape.writeEvent({ type: "message_start", schemaVersion: 1 });
+
+    // Inject a one-shot append failure (disk full, EIO) under the recorder.
+    const recorder = tape as unknown as { handle: { appendFile(text: string, enc: string): Promise<void>; sync(): Promise<void>; close(): Promise<void> } };
+    const realHandle = recorder.handle;
+    recorder.handle = {
+      appendFile: () => Promise.reject(new Error("ENOSPC: disk full")),
+      sync: () => realHandle.sync(),
+      close: () => realHandle.close(),
+    };
+    await expect(
+      tape.writeEvent({ type: "text_delta", schemaVersion: 1, text: "lost" })
+    ).rejects.toThrow(/ENOSPC/);
+    recorder.handle = realHandle;
+
+    // The failed record must not have advanced seq/prevHash: the next
+    // successful write chains directly off the last durable record.
+    await tape.writeEvent({ type: "message_stop", schemaVersion: 1, stopReason: "end_turn" });
+    await tape.close();
+
+    const verification = await verifyTape(path);
+    expect(verification.ok).toBe(true);
+    expect(verification.records).toBe(3);
+    const lines = (await readFile(path, "utf8")).split("\n").filter(Boolean);
+    expect(JSON.parse(lines[2]).seq).toBe(2);
+  });
+
   it("writeEvent after close raises E_TAPE_HASH", async () => {
     const { tape } = await fresh();
     await tape.writeEvent({ type: "message_start", schemaVersion: 1 });
