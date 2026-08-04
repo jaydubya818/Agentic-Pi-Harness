@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { assertKnownFlag } from "./args.js";
 import { detectHermes } from "../hermes/index.js";
 import { HermesBridgeServer } from "../hermes/httpBridge.js";
 
@@ -39,6 +40,8 @@ function parseArgs(argv: string[]): BridgeArgs {
     } else if (arg === "--state-root" && next) {
       args.stateRoot = next;
       i += 1;
+    } else {
+      assertKnownFlag(arg, ["--host", "--port", "--command", "--auth-token", "--state-root"]);
     }
   }
 

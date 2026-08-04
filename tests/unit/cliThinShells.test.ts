@@ -90,6 +90,34 @@ describe("hermes-bridge cli args", () => {
   });
 });
 
+describe("hermes cli unknown/valueless flag rejection", () => {
+  it("rejects mistyped flags instead of silently using defaults", async () => {
+    const run = (await import("../../src/cli/hermes-run.js")).__testables;
+    const smoke = (await import("../../src/cli/hermes-smoke.js")).__testables;
+    const demo = (await import("../../src/cli/hermes-demo.js")).__testables;
+    expect(() => run.parseArgs(["--objectve", "do things"])).toThrow(/unknown flag: --objectve/);
+    expect(() => smoke.parseArgs(["--outputdir", "/tmp/x"])).toThrow(/unknown flag: --outputdir/);
+    expect(() => demo.parseArgs(["--timeout-seconds", "60"])).toThrow(/unknown flag: --timeout-seconds/);
+    expect(() => hermesBridgeTestables.parseArgs(["--prot", "8080"])).toThrow(/unknown flag: --prot/);
+  });
+
+  it("rejects a known flag whose trailing value is missing", async () => {
+    const run = (await import("../../src/cli/hermes-run.js")).__testables;
+    const { parseHermesDoctorArgs } = await import("../../src/cli/hermes-doctor.js");
+    expect(() => run.parseArgs(["--objective"])).toThrow(/--objective requires a value/);
+    expect(() => hermesBridgeTestables.parseArgs(["--auth-token"])).toThrow(/--auth-token requires a value/);
+    expect(() => parseHermesDoctorArgs(["--url"])).toThrow(/--url requires a value/);
+  });
+
+  it("still accepts full valid invocations", async () => {
+    const run = (await import("../../src/cli/hermes-run.js")).__testables;
+    const args = run.parseArgs(["--objective", "do things", "--timeout", "60", "--bridge-url", "http://127.0.0.1:1"]);
+    expect(args.objective).toBe("do things");
+    expect(args.timeoutSeconds).toBe(60);
+    expect(args.bridgeUrl).toBe("http://127.0.0.1:1");
+  });
+});
+
 describe("hermes cli numeric flag validation", () => {
   it("hermes-run rejects invalid --timeout values with a clean error", async () => {
     const { __testables } = await import("../../src/cli/hermes-run.js");

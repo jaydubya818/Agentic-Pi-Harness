@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { parseIntFlag } from "./args.js";
+import { assertKnownFlag, parseIntFlag } from "./args.js";
 import { detectHermes, HermesAdapter, HermesTaskRequestSchema } from "../hermes/index.js";
 
 interface SmokeArgs {
@@ -37,6 +37,8 @@ function parseArgs(argv: string[]): SmokeArgs {
     } else if (arg === "--command" && next) {
       args.command = next;
       i += 1;
+    } else {
+      assertKnownFlag(arg, ["--workdir", "--output-dir", "--timeout", "--profile", "--command"]);
     }
   }
 

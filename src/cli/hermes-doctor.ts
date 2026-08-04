@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { detectHermes, ensureKnowledgeDirectorySkeleton, type KnowledgeRoots } from "../hermes/index.js";
-import { parseIntFlag } from "./args.js";
+import { assertKnownFlag, parseIntFlag } from "./args.js";
 
 export interface HermesDoctorCheck {
   name: string;
@@ -53,7 +53,12 @@ interface HermesEventsResponse {
   items: Array<{ type: string; data?: Record<string, unknown> }>;
 }
 
-export function parseHermesDoctorArgs(argv: string[]): HermesDoctorOptions {
+/**
+ * `tolerateFlags` lets a wrapping CLI (acceptance-hermes) forward its full
+ * argv here without the strict unknown-flag guard rejecting the wrapper's
+ * own flags; the wrapper parses those itself in a second pass.
+ */
+export function parseHermesDoctorArgs(argv: string[], tolerateFlags: string[] = []): HermesDoctorOptions {
   const options: HermesDoctorOptions = {
     url: "http://127.0.0.1:8787",
     tokenFile: join(homedir(), ".pi", "hermes-bridge-token"),
@@ -78,6 +83,8 @@ export function parseHermesDoctorArgs(argv: string[]): HermesDoctorOptions {
     } else if (arg === "--timeout-ms" && next) {
       options.timeoutMs = parseIntFlag("--timeout-ms", next, { min: 1, max: 86400000 });
       i += 1;
+    } else if (!tolerateFlags.includes(arg)) {
+      assertKnownFlag(arg, ["--url", "--token", "--token-file", "--workdir", "--timeout-ms"]);
     }
   }
 

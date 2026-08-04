@@ -2,7 +2,7 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { detectHermes, HermesAdapter, HermesTaskRequestSchema } from "../hermes/index.js";
-import { parseIntFlag } from "./args.js";
+import { assertKnownFlag, parseIntFlag } from "./args.js";
 
 interface DemoArgs {
   workdir: string;
@@ -42,6 +42,8 @@ function parseArgs(argv: string[]): DemoArgs {
     } else if (arg === "--command" && next) {
       args.command = next;
       i += 1;
+    } else {
+      assertKnownFlag(arg, ["--workdir", "--output-dir", "--objective", "--timeout", "--profile", "--command"]);
     }
   }
 

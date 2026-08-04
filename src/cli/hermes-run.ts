@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
-import { parseIntFlag } from "./args.js";
+import { assertKnownFlag, parseIntFlag } from "./args.js";
 import { detectHermes } from "../hermes/index.js";
 import { runHermesSupervisorTask } from "../orchestration/hermesSupervisor.js";
 
@@ -50,6 +50,8 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (arg === "--bridge-token" && next) {
       args.bridgeToken = next;
       i += 1;
+    } else {
+      assertKnownFlag(arg, ["--workdir", "--out-root", "--objective", "--timeout", "--profile", "--command", "--bridge-url", "--bridge-token"]);
     }
   }
 
