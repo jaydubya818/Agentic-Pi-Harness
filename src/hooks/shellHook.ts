@@ -40,7 +40,7 @@ export function runShellHook(spec: ShellHookSpec, ctx: HookContext): Promise<Hoo
     const [cmd, ...args] = spec.command;
     const child = spawn(cmd, args, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...(spec.env ?? {}) },
+      env: buildHookEnv(spec, ctx),
       // Own process group (POSIX) so the hard timeout can SIGKILL the whole
       // tree, not just the direct child.
       detached: process.platform !== "win32",
@@ -98,6 +98,22 @@ export function runShellHook(spec: ShellHookSpec, ctx: HookContext): Promise<Hoo
     }));
     child.stdin.end();
   });
+}
+
+/**
+ * docs/HOOK-SECURITY.md contract item 6: the hook environment is cleared
+ * except PATH, HOME, PI_HOOK_EVENT, and PI_SESSION_ID. Hooks are untrusted
+ * executables and must never inherit harness secrets (ANTHROPIC_API_KEY,
+ * AWS_*, tokens in env). Manifest-declared `spec.env` entries layer on top.
+ */
+function buildHookEnv(spec: ShellHookSpec, ctx: HookContext): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    PI_HOOK_EVENT: ctx.event,
+    PI_SESSION_ID: ctx.sessionId,
+  };
+  if (process.env.PATH !== undefined) env.PATH = process.env.PATH;
+  if (process.env.HOME !== undefined) env.HOME = process.env.HOME;
+  return { ...env, ...(spec.env ?? {}) };
 }
 
 /**

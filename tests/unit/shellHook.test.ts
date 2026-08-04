@@ -96,6 +96,34 @@ for (let i = 0; i < 8; i++) process.stdout.write(chunk);
     ).rejects.toThrow(/stdout exceeded/);
   });
 
+  it("clears the hook environment except PATH, HOME, and PI_* variables", async () => {
+    // docs/HOOK-SECURITY.md contract item 6 + review checklist: a hook that
+    // dumps its env must not see harness secrets, but still gets PATH plus
+    // the PI_HOOK_EVENT / PI_SESSION_ID correlation vars and manifest env.
+    process.env.PI_TEST_FAKE_SECRET = "hunter2";
+    try {
+      const script = `process.stdin.resume(); process.stdin.on('end', () => {
+        process.stdout.write(JSON.stringify({ outcome: 'continue', reason: JSON.stringify({
+          secret: process.env.PI_TEST_FAKE_SECRET ?? null,
+          event: process.env.PI_HOOK_EVENT ?? null,
+          session: process.env.PI_SESSION_ID ?? null,
+          extra: process.env.HOOK_EXTRA ?? null,
+        }) }));
+      });`;
+      const res = await runShellHook(
+        { command: ["node", "-e", script], env: { HOOK_EXTRA: "yes" }, hardTimeoutMs: 5000 },
+        ctx,
+      );
+      const seen = JSON.parse(res.reason!);
+      expect(seen.secret).toBeNull();
+      expect(seen.event).toBe("PreToolUse");
+      expect(seen.session).toBe("s1");
+      expect(seen.extra).toBe("yes");
+    } finally {
+      delete process.env.PI_TEST_FAKE_SECRET;
+    }
+  });
+
   it("rejects on empty command array", async () => {
     await expect(runShellHook({ command: [] }, ctx)).rejects.toBeInstanceOf(PiHarnessError);
   });
