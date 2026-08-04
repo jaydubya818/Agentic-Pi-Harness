@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { HookContext, HookResponse, HookResponseSchema, InProcessHook } from "./dispatcher.js";
 import { PiHarnessError } from "../errors.js";
 
@@ -30,16 +33,28 @@ export function makeShellHook(spec: ShellHookSpec): InProcessHook {
   return (ctx: HookContext): Promise<HookResponse> => runShellHook(spec, ctx);
 }
 
-export function runShellHook(spec: ShellHookSpec, ctx: HookContext): Promise<HookResponse> {
+export async function runShellHook(spec: ShellHookSpec, ctx: HookContext): Promise<HookResponse> {
+  if (!spec.command.length) {
+    throw new PiHarnessError("E_HOOK_SHELL", "shell hook command is empty");
+  }
+  // docs/HOOK-SECURITY.md contract item 5: hooks run in a private scratch
+  // dir, not the session workdir, so a hook cannot read session files via
+  // relative paths — it only sees what the harness passes in `payload`.
+  const scratchDir = await mkdtemp(join(tmpdir(), "pi-hook-"));
+  try {
+    return await spawnShellHook(spec, ctx, scratchDir);
+  } finally {
+    await rm(scratchDir, { recursive: true, force: true });
+  }
+}
+
+function spawnShellHook(spec: ShellHookSpec, ctx: HookContext, cwd: string): Promise<HookResponse> {
   const hardTimeout = spec.hardTimeoutMs ?? 10_000;
   return new Promise((resolve, reject) => {
-    if (!spec.command.length) {
-      reject(new PiHarnessError("E_HOOK_SHELL", "shell hook command is empty"));
-      return;
-    }
     const [cmd, ...args] = spec.command;
     const child = spawn(cmd, args, {
       stdio: ["pipe", "pipe", "pipe"],
+      cwd,
       env: buildHookEnv(spec, ctx),
       // Own process group (POSIX) so the hard timeout can SIGKILL the whole
       // tree, not just the direct child.
