@@ -124,6 +124,17 @@ for (let i = 0; i < 8; i++) process.stdout.write(chunk);
     }
   });
 
+  it("runs the hook in a scratch directory, not the harness cwd", async () => {
+    // docs/HOOK-SECURITY.md contract item 5: hooks cannot read session files
+    // via relative paths because they start in a throwaway scratch dir.
+    const script = `process.stdin.resume(); process.stdin.on('end', () => {
+      process.stdout.write(JSON.stringify({ outcome: 'continue', reason: process.cwd() }));
+    });`;
+    const res = await runShellHook({ command: ["node", "-e", script], hardTimeoutMs: 5000 }, ctx);
+    expect(res.reason).toContain("pi-hook-");
+    expect(res.reason).not.toBe(process.cwd());
+  });
+
   it("rejects on empty command array", async () => {
     await expect(runShellHook({ command: [] }, ctx)).rejects.toBeInstanceOf(PiHarnessError);
   });
