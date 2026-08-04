@@ -54,6 +54,20 @@ describe("KB access policy V1", () => {
     expect(JSON.parse(await readFile(piNote, "utf8"))).toEqual({ first: true });
   });
 
+  it("denies the JSON writer as a frontmatter bypass for governed markdown artifacts", async () => {
+    const roots = await createRoots();
+    const events: string[] = [];
+    const path = join(roots.agenticKbRoot, "staging/normalized/note.md");
+    await expect(writeKnowledgeJson({
+      actor: "pi",
+      path,
+      value: { sneaky: true },
+      roots,
+      onEvent: (event) => { events.push(event.type); },
+    })).rejects.toThrow(/must be written via writeKnowledgeText/);
+    expect(events).toContain("kb.frontmatter_validation_failed");
+  });
+
   it("allows Hermes writes in approved mission output zones", async () => {
     const roots = await createRoots();
     const runRoot = join(roots.agenticKbRoot, "missions", "2026", "mission-alpha", "runs", "run-1");
