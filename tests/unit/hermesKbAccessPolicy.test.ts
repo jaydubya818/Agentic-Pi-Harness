@@ -508,6 +508,20 @@ describe("KB access policy V1", () => {
     ).rejects.toThrow(/escapes its policy class/);
   });
 
+  it("denies a Hermes wiki delete that resolves through a symlink to outside the roots", async () => {
+    const roots = await createRoots();
+    const outside = await makeTempDir("kb-del-outside-");
+    await symlink(outside, join(roots.llmWikiRoot, "escape"));
+    await writeFile(join(outside, "victim.md"), "important\n");
+
+    await expect(
+      deleteKnowledgePath({ actor: "hermes", path: join(roots.llmWikiRoot, "escape", "victim.md"), roots, allowWikiDelete: true }),
+    ).rejects.toThrow(/refusing to follow symlink/);
+
+    // The physical file outside the roots must survive.
+    await expect(access(join(outside, "victim.md"))).resolves.toBeUndefined();
+  });
+
   it("allows a legitimate write when a benign symlink sits above the root", async () => {
     const wikiRoot = await makeTempDir("llm-wiki-benign-");
     const realKb = await makeTempDir("agentic-kb-real-");
