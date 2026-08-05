@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -482,6 +482,45 @@ describe("KB access policy V1", () => {
       await server.stop();
     }
   }, 20000);
+
+  it("denies a Hermes write whose symlinked path escapes the wiki root", async () => {
+    const roots = await createRoots();
+    const outside = await makeTempDir("kb-symlink-outside-");
+    await symlink(outside, join(roots.llmWikiRoot, "escape"));
+    const escapePath = join(roots.llmWikiRoot, "escape", "pwned.md");
+
+    await expect(
+      writeKnowledgeText({ actor: "hermes", path: escapePath, content: "escaped\n", roots }),
+    ).rejects.toThrow(/refusing to follow symlink/);
+
+    await expect(access(join(outside, "pwned.md"))).rejects.toThrow();
+  });
+
+  it("denies a symlink that crosses from a writable class into a governed class", async () => {
+    const roots = await createRoots();
+    const outputsDir = join(roots.agenticKbRoot, "missions/2026/mission-x/runs/run-1/outputs");
+    await mkdir(outputsDir, { recursive: true });
+    await symlink(join(roots.agenticKbRoot, "contracts"), join(outputsDir, "smuggle"));
+    const smuggled = join(outputsDir, "smuggle", "canon.json");
+
+    await expect(
+      writeKnowledgeText({ actor: "hermes", path: smuggled, content: "{}\n", roots }),
+    ).rejects.toThrow(/escapes its policy class/);
+  });
+
+  it("allows a legitimate write when a benign symlink sits above the root", async () => {
+    const wikiRoot = await makeTempDir("llm-wiki-benign-");
+    const realKb = await makeTempDir("agentic-kb-real-");
+    const linkParent = await makeTempDir("agentic-kb-link-");
+    const kbLink = join(linkParent, "kb");
+    await symlink(realKb, kbLink);
+    const roots = { agenticKbRoot: kbLink, llmWikiRoot: wikiRoot };
+    const outputs = join(kbLink, "missions/2026/mission-x/runs/run-1/outputs/o.json");
+
+    await writeKnowledgeText({ actor: "hermes", path: outputs, content: '{"a":1}\n', roots });
+    const landed = await readFile(join(realKb, "missions/2026/mission-x/runs/run-1/outputs/o.json"), "utf8");
+    expect(landed.trim()).toBe('{"a":1}');
+  });
 });
 
 async function createRoots() {

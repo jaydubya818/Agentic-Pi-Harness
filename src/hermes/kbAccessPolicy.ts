@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -285,6 +285,8 @@ export async function writeKnowledgeText(input: WriteKnowledgeTextInput): Promis
     throw error;
   }
 
+  await assertNoSymlinkEscape(input.actor, info, mode, input.onEvent);
+
   if (info.requiresFrontmatter) {
     try {
       assertRequiredFrontmatter(input.content, path);
@@ -336,6 +338,7 @@ export async function writeKnowledgeJson(input: WriteKnowledgeJsonInput): Promis
     });
     throw error;
   }
+  await assertNoSymlinkEscape(input.actor, info, mode, input.onEvent);
   if (info.requiresFrontmatter) {
     // Fail closed: a JSON body can never carry the required markdown
     // frontmatter, so routing a governed .md artifact through the JSON
@@ -541,6 +544,64 @@ export function deriveHermesOutputDirFromV2Artifacts(paths: string[], rootsInput
     ?? infos.find((info) => info.pathClass === "wiki")
     ?? infos[0];
   return resolve(dirname(preferred.path));
+}
+
+async function realpathDeepestExisting(path: string): Promise<string> {
+  // Resolve the deepest existing ancestor via realpath so symlink components
+  // are followed, then re-append the non-existent tail. This exposes the true
+  // physical location a write/delete will land at, independent of the lexical
+  // path the caller supplied.
+  let current = resolve(path);
+  const tail: string[] = [];
+  while (true) {
+    try {
+      const real = await realpath(current);
+      return tail.length ? join(real, ...tail.reverse()) : real;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") {
+        const parent = dirname(current);
+        if (parent === current) return resolve(path);
+        tail.push(basename(current));
+        current = parent;
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+async function assertNoSymlinkEscape(
+  actor: KnowledgeActor,
+  lexicalInfo: KnowledgePathInfo,
+  mode: KnowledgeWriteMode,
+  onEvent: ((event: KnowledgePolicyEvent) => void | Promise<void>) | undefined,
+): Promise<void> {
+  // The lexical classification trusts the textual path. A symlink component can
+  // make an approved-looking path physically resolve into a different policy
+  // class (or entirely outside the roots), which would let a write escape its
+  // containment or immutability guarantees. Re-classify against the realpath of
+  // both the roots and the target so benign parent symlinks (e.g. /tmp ->
+  // /private/tmp) are neutral while boundary-crossing symlinks are denied.
+  const realRoots: KnowledgeRoots = {
+    agenticKbRoot: await realpathDeepestExisting(lexicalInfo.roots.agenticKbRoot),
+    llmWikiRoot: await realpathDeepestExisting(lexicalInfo.roots.llmWikiRoot),
+  };
+  const realTarget = await realpathDeepestExisting(lexicalInfo.path);
+  const realInfo = classifyKnowledgePath(realTarget, realRoots);
+  if (realInfo.pathClass !== lexicalInfo.pathClass) {
+    const error = new Error(
+      `symlinked path escapes its policy class (${lexicalInfo.pathClass} -> ${realInfo.pathClass}); refusing to follow symlink: ${lexicalInfo.path}`,
+    );
+    await emitPolicyEvent(onEvent, lexicalInfo, {
+      type: "kb.write_denied",
+      actor,
+      path: lexicalInfo.path,
+      mode,
+      detail: error.message,
+    });
+    throw error;
+  }
 }
 
 function isWithin(root: string, target: string): boolean {
