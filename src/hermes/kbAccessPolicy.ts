@@ -433,6 +433,11 @@ export async function deleteKnowledgePath(input: DeleteKnowledgePathInput): Prom
   const path = resolve(input.path);
   const info = classifyKnowledgePath(path, input.roots);
 
+  // unlink follows intermediate symlinks, so a delete through a symlinked
+  // directory can reach a file physically outside the path's lexical class.
+  // Refuse before any unlink if the real target escapes its class.
+  await assertNoSymlinkEscape(input.actor, info, undefined, input.onEvent, "kb.delete_denied");
+
   if (input.actor === "hermes") {
     if (!info.inAgenticKb && !info.inLlmWiki) {
       await emitPolicyEvent(input.onEvent, info, {
@@ -574,8 +579,9 @@ async function realpathDeepestExisting(path: string): Promise<string> {
 async function assertNoSymlinkEscape(
   actor: KnowledgeActor,
   lexicalInfo: KnowledgePathInfo,
-  mode: KnowledgeWriteMode,
+  mode: KnowledgeWriteMode | undefined,
   onEvent: ((event: KnowledgePolicyEvent) => void | Promise<void>) | undefined,
+  eventType: Extract<KnowledgePolicyEventType, "kb.write_denied" | "kb.delete_denied"> = "kb.write_denied",
 ): Promise<void> {
   // The lexical classification trusts the textual path. A symlink component can
   // make an approved-looking path physically resolve into a different policy
@@ -594,7 +600,7 @@ async function assertNoSymlinkEscape(
       `symlinked path escapes its policy class (${lexicalInfo.pathClass} -> ${realInfo.pathClass}); refusing to follow symlink: ${lexicalInfo.path}`,
     );
     await emitPolicyEvent(onEvent, lexicalInfo, {
-      type: "kb.write_denied",
+      type: eventType,
       actor,
       path: lexicalInfo.path,
       mode,
