@@ -141,7 +141,14 @@ if [[ $DRY_RUN -eq 1 ]]; then
   mkdir_cmds
   echo
   echo "# token file: $TOKEN_FILE"
-  echo "$TOKEN"
+  # Never print the token itself: --dry-run output lands in terminals and
+  # logs, and when the token file already exists this would leak the live
+  # bearer token guarding the bridge.
+  if [[ -f "$TOKEN_FILE" ]]; then
+    echo "(existing token redacted)"
+  else
+    echo "(new token will be generated)"
+  fi
   echo
   echo "# run script: $RUN_SCRIPT"
   echo "$RUN_SCRIPT_CONTENT"
