@@ -206,6 +206,33 @@ describe("PI_HERMES_CONTRACT_V2 golden mission", () => {
     }
   }, 20000);
 
+  it("classifies a required artifact that is a directory as artifact_error with a result envelope", async () => {
+    const workdir = await makeTempDir("pi-hermes-v2-work-");
+    const artifactRoot = await makeTempDir("pi-hermes-v2-artifacts-");
+    const stateRoot = await makeTempDir("pi-hermes-v2-state-");
+    const server = createContractServer(stateRoot);
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    try {
+      const { sessionId } = await createSession(base, workdir);
+      const executionId = await executeGoldenMission(base, sessionId, artifactRoot, "__DIR_ARTIFACT__ summary path is a directory");
+      const run = await waitForRun(base, executionId);
+
+      // Previously the EISDIR from reading the directory aborted finalize
+      // entirely: the run settled as execution_error and no result envelope
+      // was ever written.
+      expect(run.state).toBe("failed");
+      expect(run.failure_class).toBe("artifact_error");
+      expect(run.result.failure_class).toBe("artifact_error");
+      const resultOnDisk = JSON.parse(await fileText(join(artifactRoot, "result.json")));
+      expect(resultOnDisk.failure_class).toBe("artifact_error");
+      expect(resultOnDisk.status).toBe("failed");
+    } finally {
+      await server.stop();
+    }
+  }, 20000);
+
   it("fails malformed worker result payloads as contract errors", async () => {
     const workdir = await makeTempDir("pi-hermes-v2-work-");
     const artifactRoot = await makeTempDir("pi-hermes-v2-artifacts-");

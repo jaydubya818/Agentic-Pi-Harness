@@ -16,6 +16,7 @@ const markers = {
   malformed: query.includes("__MALFORMED_RESULT__"),
   stuck: query.includes("__STUCK__"),
   slowStream: query.includes("__SLOW_STREAM__"),
+  dirArtifact: query.includes("__DIR_ARTIFACT__"),
 };
 
 function extractExpectedArtifacts(text) {
@@ -57,6 +58,12 @@ async function maybeWriteSummary(artifacts) {
   const summary = artifacts.find((artifact) => artifact.type === "summary");
   if (!summary || markers.missingArtifact) return;
   await mkdir(dirname(summary.path), { recursive: true });
+  if (markers.dirArtifact) {
+    // Simulate a misbehaving worker that creates a directory where the
+    // required summary artifact file should be.
+    await mkdir(summary.path, { recursive: true });
+    return;
+  }
   await writeFile(summary.path, `${frontmatter(summary.path, "summary-artifact")}# Golden Mission Summary\n\nHermes completed the golden mission summary artifact.\n`, "utf8");
 }
 

@@ -746,33 +746,45 @@ export class HermesBridgeServer {
     const manifestItems = [];
 
     for (const expected of task.artifacts_expected) {
-      const exists = await fileExists(expected.path);
+      const exists = await isRegularFile(expected.path);
       if (!exists && expected.required && expected.type !== "result" && expected.type !== "manifest") {
         failureClass = "artifact_error";
-        errorMessage = `required artifact missing: ${expected.path}`;
+        errorMessage = `required artifact missing or not a regular file: ${expected.path}`;
       }
     }
 
     for (const expected of task.artifacts_expected.filter((item) => item.type !== "result" && item.type !== "manifest")) {
-      if (await fileExists(expected.path)) {
-        const info = classifyKnowledgePath(expected.path, this.knowledgeRoots);
-        if (info.requiresFrontmatter) {
-          const content = await readFile(expected.path, "utf8");
-          try {
-            assertRequiredFrontmatter(content, expected.path);
-          } catch (error) {
-            failureClass = "validation_error";
-            errorMessage = error instanceof Error ? error.message : String(error);
-            await this.emitV2Event(run, {
-              event_type: "kb.frontmatter_validation_failed",
-              state: "producing_artifacts",
-              agent: "pi",
-              message: errorMessage,
-              payload: { path: expected.path, path_class: info.pathClass },
-            });
-          }
+      if (!(await isRegularFile(expected.path))) continue;
+      const info = classifyKnowledgePath(expected.path, this.knowledgeRoots);
+      if (info.requiresFrontmatter) {
+        let content: string;
+        try {
+          content = await readFile(expected.path, "utf8");
+        } catch (error) {
+          // An unreadable artifact must settle as a classified artifact
+          // failure with a proper result envelope, not abort the whole
+          // finalize pass into a generic execution_error with no envelope.
+          failureClass = "artifact_error";
+          errorMessage = `artifact unreadable: ${expected.path}: ${error instanceof Error ? error.message : String(error)}`;
+          continue;
         }
-        const item = await computeArtifactManifestItem({
+        try {
+          assertRequiredFrontmatter(content, expected.path);
+        } catch (error) {
+          failureClass = "validation_error";
+          errorMessage = error instanceof Error ? error.message : String(error);
+          await this.emitV2Event(run, {
+            event_type: "kb.frontmatter_validation_failed",
+            state: "producing_artifacts",
+            agent: "pi",
+            message: errorMessage,
+            payload: { path: expected.path, path_class: info.pathClass },
+          });
+        }
+      }
+      let item: Awaited<ReturnType<typeof computeArtifactManifestItem>>;
+      try {
+        item = await computeArtifactManifestItem({
           artifactId: `art_${expected.type}_${manifestItems.length + 1}`,
           type: expected.type,
           role: expected.role,
@@ -780,16 +792,20 @@ export class HermesBridgeServer {
           producedBy: expected.type === "trace" ? "pi" : "hermes",
           description: expected.description,
         });
-        manifestItems.push(item);
-        await this.emitV2Event(run, {
-          event_type: "artifact.produced",
-          state: "producing_artifacts",
-          agent: item.produced_by,
-          message: `Artifact produced: ${item.path}`,
-          artifact_refs: [item.artifact_id],
-          payload: { path: item.path, type: item.type, role: item.role },
-        });
+      } catch (error) {
+        failureClass = "artifact_error";
+        errorMessage = `artifact manifest computation failed: ${expected.path}: ${error instanceof Error ? error.message : String(error)}`;
+        continue;
       }
+      manifestItems.push(item);
+      await this.emitV2Event(run, {
+        event_type: "artifact.produced",
+        state: "producing_artifacts",
+        agent: item.produced_by,
+        message: `Artifact produced: ${item.path}`,
+        artifact_refs: [item.artifact_id],
+        payload: { path: item.path, type: item.type, role: item.role },
+      });
     }
 
     const resultPath = requiredArtifactPath(task, "result");
@@ -1315,6 +1331,20 @@ function requiredArtifactPath(task: PiHermesTaskEnvelopeV2, type: string): strin
   const artifact = task.artifacts_expected.find((item) => item.type === type && item.required);
   if (!artifact) throw new Error(`missing required artifact definition for type ${type}`);
   return artifact.path;
+}
+
+/**
+ * Artifact finalization only accepts regular files: a directory (or socket,
+ * fifo) at an expected artifact path previously passed the bare stat()
+ * existence check and then blew up readFile() mid-finalize, aborting the
+ * whole pass as execution_error with no result envelope written at all.
+ */
+async function isRegularFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 async function fileExists(path: string): Promise<boolean> {
