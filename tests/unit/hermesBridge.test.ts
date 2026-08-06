@@ -107,6 +107,38 @@ describe("HermesBridgeServer", () => {
     }
   }, 15000);
 
+  it("refuses to start unauthenticated on a non-loopback host", async () => {
+    const stateRoot = await makeTempDir("pi-hermes-bridge-nonloopback-state-");
+
+    const unauthenticated = new HermesBridgeServer({
+      host: "0.0.0.0",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+    });
+    await expect(unauthenticated.start()).rejects.toThrow(/non-loopback host/);
+
+    // Loopback spellings stay allowed without a token.
+    for (const host of ["127.0.0.1", "localhost"]) {
+      const local = new HermesBridgeServer({ host, port: 0, stateRoot, enforceKnowledgePolicy: false });
+      const listening = await local.start();
+      expect(listening.port).toBeGreaterThan(0);
+      await local.stop();
+    }
+
+    // A configured auth token unlocks non-loopback binds.
+    const authed = new HermesBridgeServer({
+      host: "0.0.0.0",
+      port: 0,
+      stateRoot,
+      authToken: "bridge-secret",
+      enforceKnowledgePolicy: false,
+    });
+    const listening = await authed.start();
+    expect(listening.port).toBeGreaterThan(0);
+    await authed.stop();
+  });
+
   it("rejects malformed and oversized JSON bodies without a 500", async () => {
     const stateRoot = await makeTempDir("pi-hermes-bridge-badbody-state-");
 
