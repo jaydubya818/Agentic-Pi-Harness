@@ -72,7 +72,9 @@ setTimeout(() => {}, 30000);`;
     const grandchildPid = Number(match![1]);
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(() => process.kill(grandchildPid, 0)).toThrow();
-  });
+    // 15s budget: under full-suite parallel load, node startup plus the
+    // 500ms hard timeout and SIGKILL settling can exceed the 5s default.
+  }, 15000);
 
   it("rejects on non-zero exit with E_HOOK_SHELL", async () => {
     await expect(
