@@ -273,6 +273,29 @@ describe("KB access policy V1", () => {
     })).rejects.toThrow(/promotion approval record must live under supervision/);
   });
 
+  it("refuses tombstones outside KB archive/ and supervision/", async () => {
+    const roots = await createRoots();
+    const target = join(roots.agenticKbRoot, "knowledge", "promoted", "retired.md");
+    await expect(createKnowledgeTombstone({
+      actor: "pi",
+      targetPath: target,
+      tombstonePath: join(roots.llmWikiRoot, "inbox", "retired.tombstone.md"),
+      missionId: "mission-alpha",
+      runId: "run-1",
+      roots,
+    })).rejects.toThrow(/tombstone must live under KB archive\/ or supervision\//);
+
+    const supervised = await createKnowledgeTombstone({
+      actor: "pi",
+      targetPath: target,
+      tombstonePath: join(roots.agenticKbRoot, "supervision", "rejections", "retired.tombstone.md"),
+      missionId: "mission-alpha",
+      runId: "run-1",
+      roots,
+    });
+    expect(supervised).toContain("supervision");
+  });
+
   it("refuses to promote over an existing canonical target", async () => {
     const roots = await createRoots();
     const sourcePath = join(roots.llmWikiRoot, "drafts", "candidate.md");

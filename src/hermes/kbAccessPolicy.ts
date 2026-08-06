@@ -522,6 +522,16 @@ export async function deleteKnowledgePath(input: DeleteKnowledgePathInput): Prom
 }
 
 export async function createKnowledgeTombstone(input: CreateKnowledgeTombstoneInput): Promise<string> {
+  // Tombstones are governance records: they belong in archive/ (retired
+  // artifacts) or supervision/ (rejection lineage), not scattered anywhere
+  // Pi can write. An unconstrained tombstonePath also made it possible to
+  // drop "trust: canonical" records into arbitrary locations.
+  const tombstoneInfo = classifyKnowledgePath(input.tombstonePath, input.roots);
+  if (tombstoneInfo.pathClass !== "kb_archive" && tombstoneInfo.pathClass !== "kb_supervision") {
+    const error = new Error(`tombstone must live under KB archive/ or supervision/ (${tombstoneInfo.pathClass}): ${resolve(input.tombstonePath)}`);
+    await emitPolicyEvent(input.onEvent, tombstoneInfo, { type: "kb.write_denied", actor: "pi", path: resolve(input.tombstonePath), detail: error.message });
+    throw error;
+  }
   const now = new Date().toISOString();
   const content = buildFrontmatter({
     id: `tombstone-${basename(input.tombstonePath).replace(/\.[^.]+$/, "")}`,
