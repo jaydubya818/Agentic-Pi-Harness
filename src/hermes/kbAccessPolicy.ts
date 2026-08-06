@@ -365,11 +365,47 @@ export async function writeKnowledgeJson(input: WriteKnowledgeJsonInput): Promis
   });
 }
 
+// KB_ACCESS_POLICY_V1 "Promotion rule": candidates come from Hermes-writable
+// zones (or Pi's normalized staging), canonical output is Pi-only, and the
+// approval record lives under supervision. Enforced here so a buggy or
+// misdirected promotion cannot mint "canonical" content from arbitrary
+// paths or write it outside the governed canonical directories.
+const PROMOTION_SOURCE_CLASSES: KnowledgePathClass[] = [
+  "wiki",
+  "kb_discovery",
+  "kb_handoff_inbound",
+  "kb_mission_outputs",
+  "kb_normalized",
+];
+const PROMOTION_TARGET_CLASSES: KnowledgePathClass[] = [
+  "kb_promoted",
+  "kb_contracts",
+  "kb_standards",
+];
+
 export async function promoteKnowledgeCandidate(input: PromoteKnowledgeCandidateInput): Promise<{ targetPath: string; approvalPath: string }> {
   const roots = resolveKnowledgeRoots(input.roots);
   const sourcePath = resolve(input.sourcePath);
   const targetPath = resolve(input.targetPath);
   const approvalPath = resolve(input.approvalPath);
+  const sourceInfo = classifyKnowledgePath(sourcePath, roots);
+  if (!PROMOTION_SOURCE_CLASSES.includes(sourceInfo.pathClass)) {
+    const error = new Error(`promotion source is not in an approved candidate zone (${sourceInfo.pathClass}): ${sourcePath}`);
+    await emitPolicyEvent(input.onEvent, sourceInfo, { type: "kb.write_denied", actor: "pi", path: sourcePath, detail: error.message });
+    throw error;
+  }
+  const targetInfo = classifyKnowledgePath(targetPath, roots);
+  if (!PROMOTION_TARGET_CLASSES.includes(targetInfo.pathClass)) {
+    const error = new Error(`promotion target is not a canonical Pi-only KB directory (${targetInfo.pathClass}): ${targetPath}`);
+    await emitPolicyEvent(input.onEvent, targetInfo, { type: "kb.write_denied", actor: "pi", path: targetPath, detail: error.message });
+    throw error;
+  }
+  const approvalInfo = classifyKnowledgePath(approvalPath, roots);
+  if (approvalInfo.pathClass !== "kb_supervision") {
+    const error = new Error(`promotion approval record must live under supervision (${approvalInfo.pathClass}): ${approvalPath}`);
+    await emitPolicyEvent(input.onEvent, approvalInfo, { type: "kb.write_denied", actor: "pi", path: approvalPath, detail: error.message });
+    throw error;
+  }
   if (await fileExists(targetPath)) {
     throw new Error(`promotion target already exists; tombstone or retire it first: ${targetPath}`);
   }

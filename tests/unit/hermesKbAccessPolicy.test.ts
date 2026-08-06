@@ -234,6 +234,45 @@ describe("KB access policy V1", () => {
     expect(await readFile(tombstonePath, "utf8")).toContain("# Tombstone");
   });
 
+  it("enforces the promotion rule's source, target, and approval zones", async () => {
+    const roots = await createRoots();
+    const sourcePath = join(roots.llmWikiRoot, "drafts", "candidate.md");
+    await writeKnowledgeText({ actor: "hermes", path: sourcePath, roots, content: "# Working Note\n\nUseful result.\n" });
+    const targetPath = join(roots.agenticKbRoot, "knowledge", "promoted", "zone-check.md");
+    const approvalPath = join(roots.agenticKbRoot, "supervision", "approvals", "approve-zone-check.md");
+    const outsideDir = await makeTempDir("pi-hermes-kb-promo-outside-");
+
+    // Source must come from an approved candidate zone.
+    await expect(promoteKnowledgeCandidate({
+      sourcePath: join(outsideDir, "candidate.md"),
+      targetPath,
+      approvalPath,
+      missionId: "mission-alpha",
+      runId: "run-1",
+      roots,
+    })).rejects.toThrow(/promotion source is not in an approved candidate zone/);
+
+    // Target must be a canonical Pi-only KB directory.
+    await expect(promoteKnowledgeCandidate({
+      sourcePath,
+      targetPath: join(roots.llmWikiRoot, "syntheses", "not-canonical.md"),
+      approvalPath,
+      missionId: "mission-alpha",
+      runId: "run-1",
+      roots,
+    })).rejects.toThrow(/promotion target is not a canonical Pi-only KB directory/);
+
+    // Approval record must live under supervision.
+    await expect(promoteKnowledgeCandidate({
+      sourcePath,
+      targetPath,
+      approvalPath: join(roots.agenticKbRoot, "archive", "approve-elsewhere.md"),
+      missionId: "mission-alpha",
+      runId: "run-1",
+      roots,
+    })).rejects.toThrow(/promotion approval record must live under supervision/);
+  });
+
   it("refuses to promote over an existing canonical target", async () => {
     const roots = await createRoots();
     const sourcePath = join(roots.llmWikiRoot, "drafts", "candidate.md");
