@@ -370,6 +370,12 @@ Local HTTP bridge:
 npm run hermes:bridge -- --host 127.0.0.1 --port 8787 --auth-token "$PI_HERMES_BRIDGE_TOKEN"
 ```
 
+Bridge security model:
+
+- The bridge defaults to loopback (`127.0.0.1`). `/sessions` and `/execute` spawn worker processes with a caller-chosen workdir and environment, so exposure is equivalent to command execution.
+- Binding a non-loopback host **requires** a bearer token (`--auth-token` or `PI_HERMES_BRIDGE_TOKEN`); the server refuses to start otherwise.
+- Bearer tokens are compared with a timing-safe check; request bodies are capped at 4MB; only `/healthz` is reachable without auth when a token is configured.
+
 Persistent macOS LaunchAgent setup:
 
 ```bash
