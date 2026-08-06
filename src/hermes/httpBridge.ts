@@ -111,6 +111,16 @@ export class HermesBridgeServer {
 
   async start(): Promise<{ host: string; port: number }> {
     if (this.server) throw new Error("HermesBridgeServer already started");
+    // /sessions and /execute let callers spawn worker processes with a
+    // caller-chosen workdir and environment. Exposing that beyond loopback
+    // without bearer auth is unauthenticated remote command execution (the
+    // dominant 2026 MCP-ecosystem CVE pattern), so fail closed at startup.
+    if (!this.authToken && !isLoopbackHost(this.host)) {
+      throw new Error(
+        `refusing to bind HermesBridgeServer to non-loopback host ${this.host} without an auth token; `
+        + "configure authToken (CLI: --auth-token or PI_HERMES_BRIDGE_TOKEN) to expose the bridge beyond localhost",
+      );
+    }
 
     await mkdir(this.stateRoot, { recursive: true });
     if (this.enforceKnowledgePolicy) await ensureKnowledgeDirectorySkeleton(this.knowledgeRoots);
@@ -1103,6 +1113,13 @@ export class HermesBridgeServer {
     for (const subscriber of subscriberSet) subscriber.close();
     this.subscribers.delete(executionId);
   }
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (normalized === "localhost" || normalized === "::1") return true;
+  const v4 = normalized.startsWith("::ffff:") ? normalized.slice(7) : normalized;
+  return /^127(\.\d{1,3}){3}$/.test(v4);
 }
 
 function parsedLegacyRequest(request: HermesTaskRequest): HermesTaskRequest {
