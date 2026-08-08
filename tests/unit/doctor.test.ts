@@ -2,10 +2,10 @@ import { describe, it, expect } from "vitest";
 import { doctor } from "../../src/cli/doctor.js";
 
 /**
- * `doctor` reads fixed paths relative to process.cwd() — .tool-versions,
- * package.json, goldens/canonical/tape.jsonl. Vitest runs with cwd at the
- * repo root (see vitest.config.ts), so these paths resolve to the real repo
- * files and doctor() exercises its happy-path checks end-to-end.
+ * `doctor` reads fixed paths anchored at the package root derived from the
+ * module location — .tool-versions, package.json,
+ * goldens/canonical/tape.jsonl — so it reports on the harness itself from
+ * any cwd, and doctor() exercises its happy-path checks end-to-end here.
  */
 describe("cli: doctor", () => {
   it("returns a structured list of checks that all pass on a healthy repo", async () => {
