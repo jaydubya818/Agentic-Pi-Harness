@@ -56,6 +56,47 @@ setTimeout(() => { process.stdout.write(b.subarray(4)); process.exit(0); }, 100)
     expect(__testables.resolveExecutable("", { PATH: "/usr/bin" })).toBeNull();
   });
 
+  it("delivers the full output tail before settling exit (settles on close, not exit)", async () => {
+    // The structured result block is parsed from the output tail at exit
+    // time; settling on 'exit' can race the final pipe flush and lose it.
+    const script = `
+const tail = "x".repeat(1024 * 1024) + "<<TAIL_MARKER>>";
+process.stdout.write(tail, () => process.exit(0));`;
+    const transport = spawnHermesTransport({
+      command: process.execPath,
+      args: ["-e", script],
+      cwd: process.cwd(),
+      env: process.env,
+      prefer: "subprocess",
+    });
+    let output = "";
+    transport.onOutput((chunk) => { output += chunk; });
+    await waitForExit(transport);
+    expect(output.endsWith("<<TAIL_MARKER>>")).toBe(true);
+    expect(output.length).toBe(1024 * 1024 + "<<TAIL_MARKER>>".length);
+  });
+
+  it("settles after the drain grace when a descendant holds the stdio pipes open", async () => {
+    const previousGraceMs = __testables.exitSettings.streamDrainGraceMs;
+    __testables.exitSettings.streamDrainGraceMs = 300;
+    try {
+      // sleep inherits the stdout pipe, so 'close' stays pending long after
+      // the shell itself exits; the grace fallback must settle anyway.
+      const transport = spawnHermesTransport({
+        command: "/bin/sh",
+        args: ["-c", "sleep 8 & exit 3"],
+        cwd: process.cwd(),
+        env: process.env,
+        prefer: "subprocess",
+      });
+      const exit = await waitForExit(transport);
+      expect(exit.exitCode).toBe(3);
+      transport.kill("SIGKILL");
+    } finally {
+      __testables.exitSettings.streamDrainGraceMs = previousGraceMs;
+    }
+  }, 15000);
+
   it("still reports real exit codes for commands that run", async () => {
     const transport = spawnHermesTransport({
       command: process.execPath,
