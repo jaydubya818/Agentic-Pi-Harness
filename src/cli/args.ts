@@ -8,7 +8,10 @@ import { pathToFileURL } from "node:url";
  * error (or, worse, a NaN deadline) instead of failing at the command line.
  */
 export function parseIntFlag(flag: string, raw: string, range: { min: number; max: number }): number {
-  const value = Number(raw);
+  // Number() also accepts hex ("0x10"), exponent ("1e3"), and float ("5.0")
+  // spellings; every error message here promises "an integer", so only the
+  // plain decimal spelling counts.
+  const value = /^[+-]?\d+$/.test(raw.trim()) ? Number(raw) : Number.NaN;
   if (!Number.isInteger(value) || value < range.min || value > range.max) {
     throw new Error(`invalid ${flag} value: ${JSON.stringify(raw)} (expected an integer ${range.min}-${range.max})`);
   }
