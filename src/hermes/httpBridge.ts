@@ -711,10 +711,12 @@ export class HermesBridgeServer {
         await this.failV2Run(run, "interrupted", "execution_error", "worker reported interruption");
         break;
       default:
+        // No structured event to emit; run.json is not rewritten here. The
+        // only in-memory change on these branches is legacy status
+        // bookkeeping, which rides the next persisting emit (and restart
+        // reconciliation settles non-terminal runs regardless).
         break;
     }
-
-    await this.stateStore.persistRun(run);
   }
 
   private async finalizeV2Run(run: HermesBridgeRunRecord, adapterResult: HermesTaskResult): Promise<void> {
@@ -921,11 +923,12 @@ export class HermesBridgeServer {
     const current = (run.state ?? "accepted") as PiHermesRunState;
     if (current !== next) assertValidStateTransition(current, next);
     run.state = next;
+    // emitV2Event persists the run after appending the event, and run.state
+    // is already updated above, so no second persist is needed here.
     await this.emitV2Event(run, {
       ...event,
       state: next,
     });
-    await this.stateStore.persistRun(run);
   }
 
   private async emitV2Event(
