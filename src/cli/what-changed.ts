@@ -1,3 +1,4 @@
+import { isCliEntrypoint } from "./args.js";
 import { readEffectLog, renderWhatChanged } from "../effect/recorder.js";
 
 export async function whatChanged(effectLog: string): Promise<string> {
@@ -5,7 +6,7 @@ export async function whatChanged(effectLog: string): Promise<string> {
   return renderWhatChanged(records);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   const effectLogPath = process.argv[2];
   if (!effectLogPath) {
     console.error("usage: what-changed <effects.jsonl>");

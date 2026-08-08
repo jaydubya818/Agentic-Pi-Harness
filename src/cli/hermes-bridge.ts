@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { assertKnownFlag } from "./args.js";
+import { assertKnownFlag, isCliEntrypoint } from "./args.js";
 import { detectHermes } from "../hermes/index.js";
 import { HermesBridgeServer } from "../hermes/httpBridge.js";
 
@@ -79,7 +79,7 @@ export async function runHermesBridgeCli(argv: string[] = process.argv.slice(2))
 
 export const __testables = { parseArgs };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   runHermesBridgeCli().catch((error) => {
     console.error(error);
     process.exit(1);

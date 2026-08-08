@@ -1,3 +1,4 @@
+import { isCliEntrypoint } from "./args.js";
 import { readTape, verifyTapeRecords } from "../replay/recorder.js";
 import { PiHarnessError } from "../errors.js";
 import { TapeRecord } from "../schemas/index.js";
@@ -49,7 +50,7 @@ export async function replayTape(path: string): Promise<number> {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   const tapePath = process.argv[2];
   if (!tapePath) {
     console.error("usage: replay <tape.jsonl>");

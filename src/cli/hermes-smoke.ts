@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { mkdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { assertKnownFlag, parseIntFlag } from "./args.js";
+import { assertKnownFlag, isCliEntrypoint, parseIntFlag } from "./args.js";
 import { detectHermes, HermesAdapter, HermesTaskRequestSchema } from "../hermes/index.js";
 
 interface SmokeArgs {
@@ -111,7 +111,7 @@ export async function runHermesSmoke(argv: string[] = process.argv.slice(2)): Pr
   }, null, 2));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   runHermesSmoke().catch((error) => {
     console.error(error);
     process.exit(1);

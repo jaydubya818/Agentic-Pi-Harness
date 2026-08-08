@@ -1,3 +1,6 @@
+import { realpathSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+
 /**
  * Shared numeric flag validation for the thin CLI shells. `Number("abc")` is
  * NaN and `Number("8.5")` parses, so an unchecked flag value flows into a
@@ -25,4 +28,25 @@ export function assertKnownFlag(arg: string, knownFlags: string[]): void {
     throw new Error(`flag ${arg} requires a value`);
   }
   throw new Error(`unknown flag: ${arg} (known flags: ${knownFlags.join(", ")})`);
+}
+
+/**
+ * Main-module guard for the CLI entrypoints. The historical spelling
+ * `import.meta.url === \`file://${process.argv[1]}\`` fails in two common
+ * setups and made the CLI exit 0 having silently done nothing:
+ *
+ *   - a clone path containing any URL-escaped character (a space yields
+ *     `file://...%20...` in import.meta.url vs a literal space in argv[1]);
+ *   - a symlinked entrypoint such as an npm `.bin` stub (Node resolves
+ *     import.meta.url through the symlink, argv[1] keeps the stub path),
+ *     which broke the packaged `kb` binary.
+ */
+export function isCliEntrypoint(importMetaUrl: string, argvPath: string | undefined = process.argv[1]): boolean {
+  if (!argvPath) return false;
+  if (importMetaUrl === `file://${argvPath}`) return true;
+  try {
+    return importMetaUrl === pathToFileURL(realpathSync(argvPath)).href;
+  } catch {
+    return false;
+  }
 }

@@ -1,8 +1,9 @@
+import { isCliEntrypoint } from "./args.js";
 import { verifyTape } from "../replay/recorder.js";
 
 export { verifyTape };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   const p = process.argv[2];
   if (!p) { console.error("usage: verify <tape.jsonl>"); process.exit(2); }
   verifyTape(p).then((r) => {

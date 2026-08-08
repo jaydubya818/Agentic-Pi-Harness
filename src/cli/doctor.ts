@@ -1,3 +1,4 @@
+import { isCliEntrypoint } from "./args.js";
 import { readFile } from "node:fs/promises";
 import { verifyTape } from "../replay/recorder.js";
 
@@ -33,7 +34,7 @@ export async function doctor(): Promise<Check[]> {
   return checks;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   doctor().then((cs) => {
     for (const c of cs) console.log(`${c.ok ? "✓" : "✗"} ${c.name}${c.detail ? " (" + c.detail + ")" : ""}`);
     process.exit(cs.every((c) => c.ok) ? 0 : 1);
