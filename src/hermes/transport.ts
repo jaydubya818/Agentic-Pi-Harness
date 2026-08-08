@@ -232,20 +232,44 @@ function decodeChunk(decoder: StringDecoder, chunk: Buffer | string): string {
   return typeof chunk === "string" ? chunk : decoder.write(chunk);
 }
 
+const exitSettings = {
+  /**
+   * How long after 'exit' to keep waiting for 'close' before settling
+   * anyway. A worker-spawned descendant that inherited the stdio pipes
+   * keeps 'close' from firing until *it* exits, which must not park exit
+   * settlement (and the whole run) behind an orphaned background process.
+   */
+  streamDrainGraceMs: 5000,
+};
+
 function attachExitListener(child: ChildProcess, listener: (event: HermesTransportExit) => void): void {
   let settled = false;
-  child.on("exit", (exitCode, signal) => {
+  let drainFallback: NodeJS.Timeout | null = null;
+  const settle = (event: HermesTransportExit) => {
     if (settled) return;
     settled = true;
-    listener({ exitCode: exitCode ?? 1, signal: signal ?? undefined });
+    if (drainFallback) clearTimeout(drainFallback);
+    listener(event);
+  };
+  // Settle on 'close', not 'exit': 'exit' can fire while the final
+  // stdout/stderr chunks are still queued in the pipes, and the output
+  // tail is exactly where the structured result block and session footer
+  // live. 'close' only fires once both streams have drained.
+  child.on("close", (exitCode, signal) => {
+    settle({ exitCode: exitCode ?? 1, signal: signal ?? undefined });
+  });
+  child.on("exit", (exitCode, signal) => {
+    if (settled || drainFallback) return;
+    drainFallback = setTimeout(() => {
+      settle({ exitCode: exitCode ?? 1, signal: signal ?? undefined });
+    }, exitSettings.streamDrainGraceMs);
+    drainFallback.unref?.();
   });
   child.on("error", () => {
-    if (settled) return;
-    settled = true;
     // Spawn failures (e.g. ENOENT) never emit 'exit'. Report the shell
     // convention for "command not found" instead of letting the unhandled
     // 'error' event crash the whole harness process.
-    listener({ exitCode: 127 });
+    settle({ exitCode: 127 });
   });
 }
 
@@ -262,4 +286,4 @@ function killChild(child: ChildProcess, signal?: string): void {
   child.kill(normalized);
 }
 
-export const __testables = { resolveExecutable, buildScriptPtyArgs };
+export const __testables = { resolveExecutable, buildScriptPtyArgs, exitSettings };
