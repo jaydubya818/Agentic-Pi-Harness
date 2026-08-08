@@ -5,7 +5,11 @@ All notable changes to Agentic-Pi-Harness. Versioning follows SemVer.
 ## [Unreleased]
 
 ### Added
+- `AGENTS.md`: repo guidance for coding agents — commands, layout, and the fail-closed invariants (bridge auth, KB policy, persistence, golden freeze) a change must not weaken.
 - `POST /sessions/:id/close` on the Hermes bridge closes the adapter session once its runs are terminal (409 while an execution is in flight, 404 for unknown ids). `runTaskViaBridge` releases its session best-effort after each governed run, so a long-lived shared bridge no longer accumulates one idle adapter session per run.
+
+### Changed
+- The bridge no longer rewrites `run.json` twice per worker event: `handleV2AdapterEvent` and `transitionV2State` dropped trailing persists that duplicated the persist already performed by `emitV2Event`, halving the write+fsync+rename+dirsync traffic on chatty runs.
 
 ### Fixed
 - The subprocess and script PTY transports settled worker exit on the child's `exit` event, which Node can emit while the final stdout/stderr chunks are still queued in the pipes. The adapter parses the structured `PI_TASK_RESULT_JSON` block and the session footer from the output tail at exit settlement, so a late-flushed result block could be silently lost — downgrading a successful run to `structured_output: false` (a `contract_error` under the v2 finalize path) and dropping session resumption. Exit now settles on `close` (both pipes drained), with a bounded drain grace after `exit` so a worker-spawned descendant holding the inherited pipes open cannot park settlement behind an orphaned background process.
