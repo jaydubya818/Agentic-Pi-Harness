@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isCliEntrypoint } from "./args.js";
 import { printHermesAcceptanceResult, runHermesAcceptanceCli } from "./acceptance-hermes.js";
 import { printPiAcceptanceResult, runPiAcceptanceCli } from "./acceptance-pi.js";
 
@@ -25,7 +26,7 @@ export async function runKbCli(argv: string[] = process.argv.slice(2)): Promise<
   return 2;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   runKbCli(process.argv.slice(2)).then((code) => process.exit(code)).catch((error) => {
     console.error(error);
     process.exit(1);

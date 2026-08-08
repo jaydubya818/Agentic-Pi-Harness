@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { detectHermes, ensureKnowledgeDirectorySkeleton, type KnowledgeRoots } from "../hermes/index.js";
-import { assertKnownFlag, parseIntFlag } from "./args.js";
+import { assertKnownFlag, isCliEntrypoint, parseIntFlag } from "./args.js";
 
 export interface HermesDoctorCheck {
   name: string;
@@ -273,7 +273,7 @@ export async function runHermesDoctorCli(argv: string[] = process.argv.slice(2))
   return runHermesDoctor(parseHermesDoctorArgs(argv));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   runHermesDoctorCli(process.argv.slice(2)).then((checks) => {
     for (const check of checks) {
       console.log(`${check.ok ? "✓" : "✗"} ${check.name}${check.detail ? ` (${check.detail})` : ""}`);

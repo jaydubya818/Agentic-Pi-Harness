@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
-import { assertKnownFlag, parseIntFlag } from "./args.js";
+import { assertKnownFlag, isCliEntrypoint, parseIntFlag } from "./args.js";
 import { detectHermes } from "../hermes/index.js";
 import { runHermesSupervisorTask } from "../orchestration/hermesSupervisor.js";
 
@@ -78,7 +78,7 @@ export async function runHermesRunCli(argv: string[] = process.argv.slice(2)): P
   }, null, 2));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   runHermesRunCli().catch((error) => {
     console.error(error);
     process.exit(1);

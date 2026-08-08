@@ -2,7 +2,7 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { detectHermes, HermesAdapter, HermesTaskRequestSchema } from "../hermes/index.js";
-import { assertKnownFlag, parseIntFlag } from "./args.js";
+import { assertKnownFlag, isCliEntrypoint, parseIntFlag } from "./args.js";
 
 interface DemoArgs {
   workdir: string;
@@ -99,7 +99,7 @@ export async function runHermesDemo(argv: string[] = process.argv.slice(2)): Pro
   }, null, 2));
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   runHermesDemo().catch((error) => {
     console.error(error);
     process.exit(1);

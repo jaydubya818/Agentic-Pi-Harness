@@ -1,3 +1,4 @@
+import { isCliEntrypoint } from "./args.js";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -114,7 +115,7 @@ export async function runGoldenPath(workdir: string, outRoot: string, opts: RunO
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   (async () => {
     const parsed = await parseRunCliArgs(process.argv.slice(2));
     const id = await runGoldenPath(parsed.workdir, parsed.outRoot, { tracePath: parsed.tracePath });

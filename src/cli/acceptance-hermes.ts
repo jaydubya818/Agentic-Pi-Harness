@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { HermesBridgeServer, detectHermes, type HermesAdapterOptions, type KnowledgeRoots } from "../hermes/index.js";
-import { parseIntFlag } from "./args.js";
+import { isCliEntrypoint, parseIntFlag } from "./args.js";
 import {
   HermesDoctorCheck,
   HermesDoctorOptions,
@@ -162,7 +162,7 @@ async function makeTempDir(prefix: string, cleanupPaths: string[]): Promise<stri
   return path;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   runHermesAcceptanceCli(process.argv.slice(2)).then((result) => {
     printHermesAcceptanceResult(result);
     process.exit(result.ok ? 0 : 1);

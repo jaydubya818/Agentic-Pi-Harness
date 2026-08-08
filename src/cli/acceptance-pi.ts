@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { isCliEntrypoint } from "./args.js";
 import { access } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { runGoldenPath } from "./run.js";
@@ -112,7 +113,7 @@ export function printPiAcceptanceResult(result: PiAcceptanceResult): void {
   if (!result.ok && result.failure) console.log(`- failure: ${result.failure}`);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   runPiAcceptanceCli(process.argv.slice(2)).then((result) => {
     printPiAcceptanceResult(result);
     process.exit(result.ok ? 0 : 1);

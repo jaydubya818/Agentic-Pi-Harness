@@ -1,3 +1,4 @@
+import { isCliEntrypoint } from "./args.js";
 import { readPolicyLog, renderPolicyInspection } from "../policy/decision.js";
 
 export async function inspectPolicy(policyLog: string): Promise<string> {
@@ -5,7 +6,7 @@ export async function inspectPolicy(policyLog: string): Promise<string> {
   return renderPolicyInspection(decisions);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isCliEntrypoint(import.meta.url)) {
   const policyLogPath = process.argv[2];
   if (!policyLogPath) {
     console.error("usage: inspect <policy.jsonl>");
