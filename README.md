@@ -376,6 +376,12 @@ Bridge security model:
 - Binding a non-loopback host **requires** a bearer token (`--auth-token` or `PI_HERMES_BRIDGE_TOKEN`); the server refuses to start otherwise.
 - Bearer tokens are compared with a timing-safe check; request bodies are capped at 4MB; only `/healthz` is reachable without auth when a token is configured.
 
+Supply-chain posture:
+
+- Dependencies are pinned via `package-lock.json`; install with `npm ci` (add `--ignore-scripts` if you do not need the `node-pty` native build, then `npm rebuild node-pty`).
+- The runtime dependency surface is deliberately tiny (`zod`, `node-pty`); everything else is dev-only.
+- After the August 2026 npm supply-chain worm (compromised `keyv` and 400+ packages, payloads hidden in agent/IDE config files), dependency bumps here are reviewed against publish dates and tarball contents before adoption, and the repo's agent config (`.claude/`) carries no executable content.
+
 Persistent macOS LaunchAgent setup:
 
 ```bash
