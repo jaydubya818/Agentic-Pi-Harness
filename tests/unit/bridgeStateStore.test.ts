@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -17,6 +17,23 @@ afterEach(async () => {
 });
 
 describe("HermesBridgeStateStore", () => {
+  it("retries a failed init instead of caching the stale rejection", async () => {
+    const base = await makeTempDir("pi-bridge-state-init-");
+    const blocker = join(base, "state");
+    // A regular file where the state root should be makes both mkdirs fail.
+    await writeFile(blocker, "not a directory", "utf8");
+    const store = new HermesBridgeStateStore(blocker);
+    await expect(store.init()).rejects.toThrow();
+
+    // Once the obstruction is gone, the memoized init must retry rather
+    // than replay the cached rejection forever.
+    await rm(blocker, { force: true });
+    await store.init();
+    await store.appendPreflightDenial({ at: "2026-08-09T00:00:00Z", code: "ok", message: "after retry" });
+    const denials = await store.loadPreflightDenials();
+    expect(denials.map((denial) => denial.code)).toEqual(["ok"]);
+  });
+
   it("skips corrupt preflight denial lines instead of dropping the whole log", async () => {
     const root = await makeTempDir("pi-bridge-state-denials-");
     const store = new HermesBridgeStateStore(root);

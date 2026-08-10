@@ -79,14 +79,27 @@ export function assertSafeStateIdSegment(value: string, label: string): string {
 
 export class HermesBridgeStateStore {
   readonly root: string;
+  private initPromise: Promise<void> | null = null;
 
   constructor(root: string) {
     this.root = resolve(root);
   }
 
   async init(): Promise<void> {
-    await mkdir(this.sessionsDir(), { recursive: true });
-    await mkdir(this.runsDir(), { recursive: true });
+    // Memoized: every persist/append funnels through init(), so the two
+    // skeleton mkdirs otherwise re-run for every worker output line on the
+    // per-event hot path. A failed init is not cached — a later call must
+    // retry instead of replaying the stale rejection forever.
+    if (!this.initPromise) {
+      this.initPromise = (async () => {
+        await mkdir(this.sessionsDir(), { recursive: true });
+        await mkdir(this.runsDir(), { recursive: true });
+      })();
+      this.initPromise.catch(() => {
+        this.initPromise = null;
+      });
+    }
+    return this.initPromise;
   }
 
   async load(): Promise<BridgeStateSnapshot> {
@@ -116,7 +129,10 @@ export class HermesBridgeStateStore {
   }
 
   async appendPreflightDenial(record: BridgePreflightDenialRecord): Promise<void> {
-    await this.init();
+    // mkdir directly rather than the memoized init(): the denial log lives
+    // at the state root, and an externally wiped root must be recreated
+    // here the way persistRun/appendRunEvent recreate their run dirs.
+    await mkdir(this.root, { recursive: true });
     await appendFile(this.preflightDenialsPath(), JSON.stringify(record) + "\n", "utf8");
   }
 
