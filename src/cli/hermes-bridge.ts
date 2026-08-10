@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { assertKnownFlag, isCliEntrypoint } from "./args.js";
+import { assertKnownFlag, isCliEntrypoint, parseIntFlag } from "./args.js";
 import { detectHermes } from "../hermes/index.js";
 import { HermesBridgeServer } from "../hermes/httpBridge.js";
 
@@ -25,11 +25,7 @@ function parseArgs(argv: string[]): BridgeArgs {
       args.host = next;
       i += 1;
     } else if (arg === "--port" && next) {
-      const port = Number(next);
-      if (!Number.isInteger(port) || port < 0 || port > 65535) {
-        throw new Error(`invalid --port value: ${JSON.stringify(next)} (expected an integer 0-65535)`);
-      }
-      args.port = port;
+      args.port = parseIntFlag("--port", next, { min: 0, max: 65535 });
       i += 1;
     } else if (arg === "--command" && next) {
       args.command = next;
