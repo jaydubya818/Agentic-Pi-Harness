@@ -85,6 +85,10 @@ describe("hermes-bridge cli args", () => {
     expect(() => hermesBridgeTestables.parseArgs(["--port", "abc"])).toThrow(/invalid --port/);
     expect(() => hermesBridgeTestables.parseArgs(["--port", "70000"])).toThrow(/invalid --port/);
     expect(() => hermesBridgeTestables.parseArgs(["--port", "8.5"])).toThrow(/invalid --port/);
+    // Number() accepts hex and exponent spellings; the shared strict helper
+    // must reject them here the same way it does for every other int flag.
+    expect(() => hermesBridgeTestables.parseArgs(["--port", "0x1f90"])).toThrow(/invalid --port/);
+    expect(() => hermesBridgeTestables.parseArgs(["--port", "8e3"])).toThrow(/invalid --port/);
     expect(hermesBridgeTestables.parseArgs(["--port", "8080"]).port).toBe(8080);
     expect(hermesBridgeTestables.parseArgs([]).port).toBe(8787);
   });
