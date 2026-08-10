@@ -19,6 +19,27 @@ afterEach(async () => {
 });
 
 describe("HermesBridgeServer", () => {
+  it("joins concurrent stop() calls instead of re-closing the server", async () => {
+    const stateRoot = await makeTempDir("pi-hermes-bridge-stop-state-");
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+    await server.start();
+    // A second SIGINT-style stop while the first is draining must join the
+    // in-flight stop, not reject with ERR_SERVER_NOT_RUNNING.
+    await Promise.all([server.stop(), server.stop()]);
+    await server.stop();
+  });
+
   it("requires bearer auth when bridge token configured", async () => {
     const workdir = await makeTempDir("pi-hermes-bridge-auth-work-");
     const outputDir = await makeTempDir("pi-hermes-bridge-auth-out-");
