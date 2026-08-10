@@ -1,6 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { answerRoutineQuestion } from "../sofie/authority.js";
+import { safeWriteJson } from "../session/provenance.js";
 
 export interface ExternalValidationResult {
   targetRepoName: string;
@@ -43,7 +44,7 @@ export async function validateExternalTarget(targetPath: string, outRoot: string
     frictionFindings: commands.filter((entry) => !entry.ok).map((entry) => entry.stderr || entry.stdout).filter(Boolean),
   });
 
-  await writeFile(join(outDir, "summary.json"), JSON.stringify({ targetRepoName, commands, sofie }, null, 2));
+  await safeWriteJson(join(outDir, "summary.json"), { targetRepoName, commands, sofie });
 
   return {
     targetRepoName,
