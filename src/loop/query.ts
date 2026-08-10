@@ -25,6 +25,8 @@ import {
   requestApprovalDecision,
 } from "../approvals/runtime.js";
 import { evaluateWorkerToolUse, validateWorkerModeInputs, WorkerModeControls } from "../runtime/workerControls.js";
+import { Counters, CountersSink } from "../metrics/counter.js";
+import { CostRecord, CostTable, CostTracker } from "../metrics/cost.js";
 import { SofieAnswer, SofieContext, SofieToolEvidence, answerRoutineQuestion, makeApprovalSummaries } from "../sofie/authority.js";
 
 export type LoopMode = "plan" | "assist" | "autonomous" | "worker" | "dry-run";
@@ -57,8 +59,10 @@ export interface LoopInputs {
     kind?: SofieContext["kind"];
     frictionFindings?: string[];
   };
-  counters?: unknown;
-  costTable?: unknown;
+  /** Optional metrics sink (e.g. FanOutCounters with an OTel sink); the loop increments it in real time and snapshots it into LoopResult. */
+  counters?: CountersSink;
+  /** Optional cost table; when set, LoopResult.cost carries a CostRecord estimated from the emitted event stream. */
+  costTable?: CostTable;
 }
 
 export interface LoopResult {
@@ -71,7 +75,7 @@ export interface LoopResult {
   approvalDecisions: ApprovalDecision[];
   sofieAnswer: SofieAnswer | null;
   counters: Record<string, number>;
-  cost: null;
+  cost: CostRecord | null;
 }
 
 interface PreparedToolDispatch {
@@ -79,18 +83,6 @@ interface PreparedToolDispatch {
   order: number;
   immediateResult?: StreamEvent;
   scheduledCall?: ScheduledCall<StreamEvent>;
-}
-
-function createCounters() {
-  const counts = new Map<string, number>();
-  return {
-    inc(key: string, by = 1) {
-      counts.set(key, (counts.get(key) ?? 0) + by);
-    },
-    snapshot(): Record<string, number> {
-      return Object.fromEntries(counts);
-    },
-  };
 }
 
 function extractPaths(input: unknown): string[] {
@@ -115,7 +107,7 @@ async function appendJsonl(path: string, value: unknown): Promise<void> {
 
 async function emitEvent(
   tape: ReplayRecorder,
-  counters: ReturnType<typeof createCounters>,
+  counters: CountersSink,
   events: StreamEvent[],
   sessionId: string,
   tracePath: string | undefined,
@@ -214,7 +206,7 @@ function unknownToolResult(event: ToolUseEvent): StreamEvent {
 async function executeApprovedTool(
   inp: LoopInputs,
   mode: LoopMode,
-  counters: ReturnType<typeof createCounters>,
+  counters: CountersSink,
   effects: EffectRecord[],
   event: ToolUseEvent,
 ): Promise<StreamEvent> {
@@ -297,7 +289,7 @@ async function executeApprovedTool(
 async function prepareToolDispatch(
   inp: LoopInputs,
   mode: LoopMode,
-  counters: ReturnType<typeof createCounters>,
+  counters: CountersSink,
   effects: EffectRecord[],
   decisions: PolicyDecision[],
   approvalPackets: ApprovalPacket[],
@@ -409,7 +401,7 @@ async function prepareToolDispatch(
 
 async function emitNonToolEvent(
   inp: LoopInputs,
-  counters: ReturnType<typeof createCounters>,
+  counters: CountersSink,
   events: StreamEvent[],
   event: Exclude<StreamEvent, { type: "tool_use" }>,
 ): Promise<{ messageStarted: boolean; stopReason: string | null }> {
@@ -426,7 +418,7 @@ async function emitNonToolEvent(
 async function flushPendingToolUses(
   inp: LoopInputs,
   mode: LoopMode,
-  counters: ReturnType<typeof createCounters>,
+  counters: CountersSink,
   events: StreamEvent[],
   effects: EffectRecord[],
   decisions: PolicyDecision[],
@@ -485,7 +477,9 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
     approvalRequesterConfigured: !!inp.approvalRequester,
   });
 
-  const counters = createCounters();
+  // Honor a caller-provided sink (docs in metrics/counter.ts + metrics/otel.ts
+  // promise real-time increments through `counters`); default stays in-memory.
+  const counters: CountersSink = inp.counters ?? new Counters();
   const events: StreamEvent[] = [];
   const effects: EffectRecord[] = [];
   const decisions: PolicyDecision[] = [];
@@ -629,6 +623,13 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
       })
     : null;
 
+  let cost: CostRecord | null = null;
+  if (inp.costTable) {
+    const tracker = new CostTracker(inp.costTable);
+    for (const event of events) tracker.observe(event);
+    cost = tracker.snapshot();
+  }
+
   return {
     events,
     compactedEvents,
@@ -639,6 +640,6 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
     approvalDecisions,
     sofieAnswer,
     counters: counters.snapshot(),
-    cost: null,
+    cost,
   };
 }
