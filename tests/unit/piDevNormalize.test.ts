@@ -16,6 +16,11 @@ describe("pi.dev normalize", () => {
   it("message_stop maps stop_reason", () => {
     expect(normalize({ type: "message_stop", stop_reason: "end_turn" })).toEqual({ kind: "stop", stopReason: "end_turn" });
   });
+  it("tolerates housekeeping chunks as contentless text", () => {
+    expect(normalize({ type: "content_block_stop", index: 0 })).toEqual({ kind: "text", text: "" });
+    expect(normalize({ type: "message_delta", delta: { stop_reason: "end_turn" } })).toEqual({ kind: "text", text: "" });
+    expect(normalize({ type: "ping" })).toEqual({ kind: "text", text: "" });
+  });
   it("throws on unknown type", () => {
     expect(() => normalize({ type: "weird" })).toThrow(/unrecognized/);
   });

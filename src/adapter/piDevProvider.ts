@@ -106,6 +106,16 @@ export function normalize(raw: unknown): PiStreamChunk {
       };
     case "message_stop":
       return { kind: "stop", stopReason: String(r.stopReason ?? r.stop_reason ?? "end_turn") };
+    // Housekeeping chunks from the Anthropic-style stream family this
+    // mapping mirrors. They carry no content the harness consumes, but a
+    // real provider emits them on every run (one content_block_stop per
+    // block, message_delta before message_stop, keepalive pings), so
+    // throwing here killed live streams mid-run. Treat them like the other
+    // contentless chunks above; genuinely unknown types still fail closed.
+    case "content_block_stop":
+    case "message_delta":
+    case "ping":
+      return { kind: "text", text: "" };
     default:
       throw new PiHarnessError("E_MODEL_ADAPTER", `unrecognized pi.dev chunk type: ${t}`);
   }
