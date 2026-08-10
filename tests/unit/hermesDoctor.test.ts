@@ -41,6 +41,7 @@ describe("runHermesDoctor", () => {
     process.env.HERMES_REPO_PATH = repoPath;
 
     let runPolls = 0;
+    let sessionClosed = false;
     const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
       const method = init?.method ?? "GET";
@@ -63,6 +64,11 @@ describe("runHermesDoctor", () => {
 
       if (url.endsWith("/sessions") && method === "POST") {
         return new Response(JSON.stringify({ session_id: "sess_doctor" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+
+      if (url.endsWith("/sessions/sess_doctor/close") && method === "POST") {
+        sessionClosed = true;
+        return new Response(JSON.stringify({ session_id: "sess_doctor", status: "closed" }), { status: 200, headers: { "content-type": "application/json" } });
       }
 
       if (url.endsWith("/execute") && method === "POST") {
@@ -112,6 +118,9 @@ describe("runHermesDoctor", () => {
     expect(checks.find((check) => check.name === "bridge execute smoke test completes")?.detail).toBe("completed");
     expect(checks.find((check) => check.name === "transport is PTY")?.detail).toBe("pty");
     expect(runPolls).toBeGreaterThanOrEqual(2);
+    // The doctor must release its smoke-test session so repeated runs
+    // against a long-lived bridge do not accumulate idle adapter sessions.
+    expect(sessionClosed).toBe(true);
     expect(fetchMock).toHaveBeenCalled();
   });
 
