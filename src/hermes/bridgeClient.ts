@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
 import { NoopLogger, type Logger } from "../obs/logger.js";
-import { digestPolicy, writeSessionStartProvenance } from "../session/provenance.js";
+import { digestPolicy, safeWriteJson, writeSessionStartProvenance } from "../session/provenance.js";
 import { HermesBridgeServer, type HermesBridgeServerOptions } from "./httpBridge.js";
 import type { HermesAdapterOptions, HermesAdapterSession, HermesTaskAccepted, HermesTaskResult } from "./index.js";
 
@@ -108,7 +108,9 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
         step_id: stepId,
       },
     };
-    await writeFile(requestPath, JSON.stringify(request, null, 2) + "\n", "utf8");
+    // request.json is the immutable record of what was asked; write it with
+    // the same write-rename+fsync treatment as every other persisted record.
+    await safeWriteJson(requestPath, request);
 
     const executeResponse = await fetch(`${baseUrl}/execute`, {
       method: "POST",
@@ -168,7 +170,9 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
       const suffix = run?.error ? `: ${run.error}` : "";
       throw new Error(`bridge run did not produce a result for execution ${accepted.execution_id} (status ${status}${suffix})`);
     }
-    await writeFile(resultPath, JSON.stringify(result, null, 2) + "\n", "utf8");
+    // result.json is the source of truth for the governed run; a crash here
+    // must leave either no file or a complete one, never torn JSON.
+    await safeWriteJson(resultPath, result);
 
     logger.child({ piSessionId, hermesSessionId: adapterSession.session_id, executionId: accepted.execution_id }).log("info", "hermes.supervisor.bridge.completed", {
       status: result?.status,
