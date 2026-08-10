@@ -172,6 +172,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
 
   const knowledgeRoots = await ensureKnowledgeDirectorySkeleton(options.knowledgeRoots);
   const outputDir = await mkdtemp(join(knowledgeRoots.llmWikiRoot, "inbox", "pi-hermes-doctor-"));
+  let sessionId: string | null = null;
   try {
     const sessionResponse = await fetch(`${url}/sessions`, {
       method: "POST",
@@ -182,6 +183,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
       body: JSON.stringify({ workdir }),
     });
     const session = await sessionResponse.json() as HermesSessionResponse;
+    sessionId = session.session_id ?? null;
     checks.push({
       name: "bridge session creation works",
       ok: sessionResponse.ok && Boolean(session.session_id),
@@ -251,6 +253,17 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
       detail: String(transportEvent?.data?.transport_backend ?? "missing"),
     });
   } finally {
+    // Release the bridge-side session so repeated doctor runs against a
+    // long-lived bridge do not each leave an idle adapter session behind.
+    // Best-effort: a close rejection (409 on a still-running smoke run,
+    // unreachable bridge) must not mask the checks already collected.
+    if (sessionId) {
+      try {
+        await fetch(`${url}/sessions/${sessionId}/close`, { method: "POST", headers: authHeaders });
+      } catch {
+        // ignore — session close is cleanup, not part of the diagnosis
+      }
+    }
     await rm(outputDir, { recursive: true, force: true });
   }
 
