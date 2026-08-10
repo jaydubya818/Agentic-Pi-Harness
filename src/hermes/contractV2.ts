@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { mkdir } from "node:fs/promises";
 import { z } from "zod";
+import { safeWriteJson } from "../session/provenance.js";
 
 const AbsolutePath = z.string().min(1).refine((value) => value.startsWith("/"), {
   message: "expected absolute path",
@@ -259,8 +259,11 @@ export async function computeArtifactManifestItem(input: {
 }
 
 export async function writeJsonArtifact(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(value, null, 2) + "\n", "utf8");
+  // Result envelopes, manifests, and traces are the contract's source of
+  // truth for a run, so they get the same write-rename+fsync treatment as
+  // every other persisted record: a crash mid-finalize must leave either
+  // the previous complete artifact or the new one, never torn JSON.
+  await safeWriteJson(path, value);
 }
 
 function inferMimeType(path: string): string | null {
