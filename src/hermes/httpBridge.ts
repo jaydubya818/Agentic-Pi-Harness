@@ -87,6 +87,7 @@ export class HermesBridgeServer {
   private readonly stuckTimeoutMs: number;
   private readonly emitSemanticHeartbeats: boolean;
   private server: Server | null = null;
+  private stopPromise: Promise<void> | null = null;
   private readonly sessions = new Map<string, HermesAdapterSession>();
   private readonly runs = new Map<string, HermesBridgeRunRecord>();
   private readonly activeWatchers = new Set<Promise<void>>();
@@ -154,6 +155,20 @@ export class HermesBridgeServer {
 
   async stop(): Promise<void> {
     if (!this.server) return;
+    // Concurrent stops (e.g. a second SIGINT while the CLI shutdown is
+    // draining watchers) must join the in-flight stop: re-entering would
+    // call server.close() on an already-closing server and reject with
+    // ERR_SERVER_NOT_RUNNING out of an unawaited signal handler.
+    if (!this.stopPromise) {
+      // Cleared on settle either way: a failed stop must stay retryable.
+      this.stopPromise = this.doStop().finally(() => {
+        this.stopPromise = null;
+      });
+    }
+    return this.stopPromise;
+  }
+
+  private async doStop(): Promise<void> {
     for (const controller of this.heartbeatControllers.values()) controller.stop();
     this.heartbeatControllers.clear();
     // Cancel in-flight executions before draining watchers. stop() awaits
