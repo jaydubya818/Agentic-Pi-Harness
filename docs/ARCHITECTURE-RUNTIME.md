@@ -100,7 +100,7 @@ Opens the session directory, writes the `ProvenanceManifest` (loopGitSha, repoGi
 - **`ReplayRecorder`** — append-only hash-chained tape (`ADR 0002`). Every `StreamEvent` goes through it.
 - **`EffectRecorder`** — pre-snapshot + post-capture for every mutating tool, emitting `EffectRecord`s with unified diffs and rollback confidence.
 - **`SanitizationRecord`** — per-tool-output wrapper rewrites (ANSI, nested tags, control chars, truncation).
-- **`Counters`** — in-memory observability (OTel swap is Tier C).
+- **`Counters`** — observability sink. The loop increments any `CountersSink` passed via `LoopInputs.counters` in real time (in-memory `Counters` by default; `FanOutCounters` + `createOtelCounters` for an OTel mirror), and an optional `LoopInputs.costTable` yields a `CostRecord` in `LoopResult.cost`.
 - **Replay debugger helpers** — derive merged operator/debug timelines from the existing tape, policy, and effect artifacts without changing their persisted contracts.
 
 These are called by Layer 4 but written to by no other layer. They are the only things a post-hoc auditor needs to reconstruct a session.
@@ -146,5 +146,5 @@ model.stream() ──► [optional retry only before first persisted event]
 
 - **MCP host.** Tier C.
 - **Multi-provider fanout.** Tier C; the adapter seam is ready.
-- **OpenTelemetry.** Tier C; `Counters` is the swap point.
+- **OpenTelemetry SDK dependency.** Still not a runtime dep; `createOtelCounters` lazy-imports `@opentelemetry/api` only when the host project provides it, and plugs into the loop via `LoopInputs.counters`.
 - **Permission prompts UI.** Out of scope — the loop emits `ask` decisions and leaves UI to the caller.
