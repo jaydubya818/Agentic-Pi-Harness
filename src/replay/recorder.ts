@@ -1,8 +1,8 @@
-import { FileHandle, mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { FileHandle, open, readFile } from "node:fs/promises";
 import { parseOrThrow, StreamEvent, TapeEventRecordSchema, TapeHeaderSchema, TapeRecord, TapeRecordSchema } from "../schemas/index.js";
 import { sha256HexFramed } from "../schemas/canonical.js";
 import { PiHarnessError } from "../errors.js";
+import { safeWriteFileAtomic } from "../session/provenance.js";
 
 const ZERO = "0".repeat(64);
 
@@ -19,34 +19,6 @@ export interface VerifyResult {
   records: number;
   error?: string;
   digest?: string;
-}
-
-/**
- * Initial crash-safe write for the tape header. Uses the classic write-to-tmp +
- * fsync + rename + fsync(dir) dance so a crash mid-init leaves no partial tape.
- * Only called once per session (for the header); subsequent events are appended
- * via an open file handle — see ReplayRecorder below.
- */
-async function safeWriteText(path: string, text: string): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = path + ".tmp";
-  await writeFile(tmp, text, "utf8");
-
-  const fileHandle = await open(tmp, "r");
-  try {
-    await fileHandle.sync();
-  } finally {
-    await fileHandle.close();
-  }
-
-  await rename(tmp, path);
-
-  const dirHandle = await open(dirname(path), "r");
-  try {
-    await dirHandle.sync();
-  } finally {
-    await dirHandle.close();
-  }
 }
 
 function hashRecord(record: Omit<TapeRecord, "recordHash">): string {
@@ -197,7 +169,11 @@ export class ReplayRecorder {
     this.prevHash = recordHash;
     this.seq = 0;
     // Atomically install the header file.
-    await safeWriteText(this.tapePath, JSON.stringify(record) + "\n");
+    // Initial crash-safe write for the tape header: write-tmp + fsync +
+    // rename + fsync(dir) so a crash mid-init leaves no partial tape. Only
+    // used once per session (for the header); subsequent events are appended
+    // via the open file handle below.
+    await safeWriteFileAtomic(this.tapePath, JSON.stringify(record) + "\n");
     // Then open in append mode for subsequent events.
     this.handle = await open(this.tapePath, "a");
     this.closed = false;
