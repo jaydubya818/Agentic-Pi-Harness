@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { runTaskViaBridge } from "../../src/hermes/bridgeClient.js";
+import { __bridgeClientTestables, runTaskViaBridge } from "../../src/hermes/bridgeClient.js";
 
 const createdPaths: string[] = [];
 
@@ -110,6 +110,60 @@ describe("bridge client run polling", () => {
       })).rejects.toThrow(/status failed: hermes spawn failed/);
       expect(Date.now() - startedAt).toBeLessThan(5000);
     } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 15000);
+  it("best-effort cancels the execution when the poll deadline expires without a result", async () => {
+    let cancelled = 0;
+    const server = createServer((req, res) => {
+      if (req.method === "POST" && req.url === "/sessions") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ session_id: "sess_1" }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/execute") {
+        res.writeHead(202, { "content-type": "application/json" });
+        res.end(JSON.stringify({ execution_id: "exec_1", status: "accepted" }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/cancel") {
+        cancelled += 1;
+        res.writeHead(202, { "content-type": "application/json" });
+        res.end(JSON.stringify({ execution_id: "exec_1", status: "cancelled" }));
+        return;
+      }
+      if (req.url?.startsWith("/runs/exec_1/events")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("[]");
+        return;
+      }
+      if (req.url?.startsWith("/runs/exec_1")) {
+        // Never terminal: the worker just keeps running past the deadline.
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: "running" }));
+        return;
+      }
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const outRoot = await mkdtemp(join(tmpdir(), "pi-bridge-poll-"));
+    createdPaths.push(outRoot);
+
+    const previousGraceMs = __bridgeClientTestables.pollSettings.deadlineGraceMs;
+    __bridgeClientTestables.pollSettings.deadlineGraceMs = 200;
+    try {
+      await expect(runTaskViaBridge({
+        objective: "deadline expiry cancel",
+        workdir: outRoot,
+        outRoot,
+        timeoutSeconds: 1,
+        bridgeUrl: `http://127.0.0.1:${port}`,
+      })).rejects.toThrow(/did not produce a result/);
+      expect(cancelled).toBe(1);
+    } finally {
+      __bridgeClientTestables.pollSettings.deadlineGraceMs = previousGraceMs;
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   }, 15000);
