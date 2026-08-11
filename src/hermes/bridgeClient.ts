@@ -38,6 +38,13 @@ export interface BridgeGovernedRun {
   bridge_url: string;
 }
 
+const TERMINAL_RUN_STATUSES = ["completed", "failed", "cancelled", "interrupted"];
+
+const pollSettings = {
+  /** Slack past the task timeout before the poll loop gives up on the run. */
+  deadlineGraceMs: 5000,
+};
+
 export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<BridgeGovernedRun> {
   const logger = input.logger ?? new NoopLogger();
   const outRoot = resolve(input.outRoot);
@@ -132,13 +139,13 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
 
     let run: any = null;
     let pollDelayMs = 50;
-    const deadline = Date.now() + ((input.timeoutSeconds ?? 900) * 1000) + 5000;
+    const deadline = Date.now() + ((input.timeoutSeconds ?? 900) * 1000) + pollSettings.deadlineGraceMs;
     while (Date.now() < deadline) {
       try {
         const runResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}`, { headers: authHeaders });
         if (runResponse.ok) {
           run = await runResponse.json();
-          const terminal = ["completed", "failed", "cancelled", "interrupted"].includes(run.status);
+          const terminal = TERMINAL_RUN_STATUSES.includes(run.status);
           if (terminal && (run.worker_result || run.result)) break;
           // A terminal run that reports an error but no result payload will
           // never grow one (spawn failure, torn transport, bridge restart
@@ -154,6 +161,22 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
       // Fast first polls keep short embedded runs snappy; back off to 500ms
       // so long-running governed work is not hammered with ~20 req/s.
       pollDelayMs = Math.min(pollDelayMs * 2, 500);
+    }
+
+    if (!run || !TERMINAL_RUN_STATUSES.includes(run.status)) {
+      // The poll deadline expired with the run still executing. Best-effort
+      // cancel so an external long-lived bridge does not keep running a
+      // governed task nobody is waiting on anymore (the embedded bridge is
+      // cancelled by server.stop() in the finally block either way).
+      try {
+        await fetch(`${baseUrl}/cancel`, {
+          method: "POST",
+          headers: { ...authHeaders, "content-type": "application/json" },
+          body: JSON.stringify({ execution_id: accepted.execution_id }),
+        });
+      } catch {
+        // cancel is cleanup; the missing-result error below is authoritative
+      }
     }
 
     try {
@@ -207,3 +230,5 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
     if (server) await server.stop();
   }
 }
+
+export const __bridgeClientTestables = { pollSettings };
