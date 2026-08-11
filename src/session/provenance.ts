@@ -1,4 +1,5 @@
-import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
 import { parseOrThrow, ProvenanceManifest, ProvenanceManifestSchema } from "../schemas/index.js";
 import { canonicalize, sha256Hex } from "../schemas/canonical.js";
@@ -18,20 +19,38 @@ export interface CreateProvenanceManifestInput {
 
 /** Write-rename + fsync for crash-safety. */
 export async function safeWriteJson(path: string, value: unknown): Promise<void> {
+  await safeWriteFileAtomic(path, JSON.stringify(value, null, 2) + "\n");
+}
+
+/**
+ * Shared write-to-tmp + fsync + rename + fsync(dir) primitive behind every
+ * crash-safe persisted record. The tmp name is unique per write: with a
+ * fixed `path + ".tmp"`, two concurrent writers to the same path truncate
+ * each other's tmp file mid-fsync (so the winner renames a torn file into
+ * place) and the loser's rename throws ENOENT after the winner moved the
+ * shared tmp away.
+ */
+export async function safeWriteFileAtomic(path: string, data: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const tmp = path + ".tmp";
-  const json = JSON.stringify(value, null, 2) + "\n";
+  const tmp = `${path}.${randomBytes(6).toString("hex")}.tmp`;
 
-  await writeFile(tmp, json, "utf8");
-
-  const fileHandle = await open(tmp, "r");
   try {
-    await fileHandle.sync();
-  } finally {
-    await fileHandle.close();
-  }
+    await writeFile(tmp, data, "utf8");
 
-  await rename(tmp, path);
+    const fileHandle = await open(tmp, "r");
+    try {
+      await fileHandle.sync();
+    } finally {
+      await fileHandle.close();
+    }
+
+    await rename(tmp, path);
+  } catch (error) {
+    // Unique tmp names never get overwritten by a later attempt, so a
+    // failed write must clean up after itself or orphans accumulate.
+    await unlink(tmp).catch(() => {});
+    throw error;
+  }
 
   const dirHandle = await open(dirname(path), "r");
   try {
