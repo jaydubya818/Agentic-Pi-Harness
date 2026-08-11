@@ -576,12 +576,18 @@ export class HermesBridgeServer {
       for await (const event of this.adapter.read_events(run.session.session_id, run.accepted.execution_id)) {
         run.events.push(event);
         const status = statusFromLegacyEvent(event.type);
+        const statusChanged = status !== null && status !== run.status;
         if (status) run.status = status;
         await this.stateStore.appendRunEvent(run.accepted.execution_id, event);
         if (run.v2Task) {
           await this.handleV2AdapterEvent(run, event);
         } else {
-          await this.stateStore.persistRun(run);
+          // run.json only carries the status snapshot here (the event itself
+          // was appended to events.jsonl above, and result/error are
+          // persisted after the loop), so rewriting it for every worker
+          // output line is a redundant write+fsync+rename+dirsync cycle:
+          // every task.output maps to "running". Persist on transitions.
+          if (statusChanged) await this.stateStore.persistRun(run);
           this.broadcastEvent(run, event);
         }
       }
