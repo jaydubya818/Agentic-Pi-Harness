@@ -1,5 +1,5 @@
-import { appendFile, mkdir, open, readdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { safeWriteJson } from "../session/provenance.js";
 import {
   HermesSessionSchema,
@@ -119,7 +119,7 @@ export class HermesBridgeStateStore {
   async persistRun(record: BridgeStateRunRecord): Promise<void> {
     await this.init();
     await mkdir(this.runDir(record.accepted.execution_id), { recursive: true });
-    await safeWriteJsonUnique(this.runPath(record.accepted.execution_id), serializeRun(record));
+    await safeWriteJson(this.runPath(record.accepted.execution_id), serializeRun(record));
   }
 
   async appendRunEvent(executionId: string, event: BridgeEventRecord): Promise<void> {
@@ -270,26 +270,6 @@ function parseBridgeEvent(event: unknown): BridgeEventRecord {
   const v2 = PiHermesStructuredEventV2Schema.safeParse(event);
   if (v2.success) return v2.data;
   return HermesTaskEventSchema.parse(event);
-}
-
-async function safeWriteJsonUnique(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  const tmp = `${path}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
-  const json = JSON.stringify(value, null, 2) + "\n";
-  await writeFile(tmp, json, "utf8");
-  const fileHandle = await open(tmp, "r");
-  try {
-    await fileHandle.sync();
-  } finally {
-    await fileHandle.close();
-  }
-  await rename(tmp, path);
-  const dirHandle = await open(dirname(path), "r");
-  try {
-    await dirHandle.sync();
-  } finally {
-    await dirHandle.close();
-  }
 }
 
 async function safeReadDir(path: string): Promise<string[]> {
