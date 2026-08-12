@@ -53,6 +53,8 @@ interface HermesEventsResponse {
   items: Array<{ type: string; data?: Record<string, unknown> }>;
 }
 
+const TERMINAL_RUN_STATUSES = ["completed", "failed", "cancelled", "interrupted"];
+
 /**
  * `tolerateFlags` lets a wrapping CLI (acceptance-hermes) forward its full
  * argv here without the strict unknown-flag guard rejecting the wrapper's
@@ -225,12 +227,30 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
       try {
         const runResponse = await fetch(`${url}/runs/${accepted.execution_id}`, { headers: authHeaders });
         run = await runResponse.json() as HermesRunResponse;
-        if (["completed", "failed", "cancelled", "interrupted"].includes(run.status)) break;
+        if (TERMINAL_RUN_STATUSES.includes(run.status)) break;
       } catch {
         // One flaky poll (connection reset, non-JSON proxy error) must not
         // crash the doctor while the smoke run is still executing.
       }
       await sleep(pollIntervalMs);
+    }
+
+    if (!run || !TERMINAL_RUN_STATUSES.includes(run.status)) {
+      // The poll deadline expired with the smoke run still executing.
+      // Without a cancel, the session close below answers 409 (non-terminal
+      // execution) -- so the session leak the close exists to prevent comes
+      // back -- and cleanup deletes outputDir out from under a worker that
+      // is still writing to it. Best-effort, mirroring the deadline-expiry
+      // cancel runTaskViaBridge performs.
+      try {
+        await fetch(`${url}/cancel`, {
+          method: "POST",
+          headers: { ...authHeaders, "content-type": "application/json" },
+          body: JSON.stringify({ execution_id: accepted.execution_id }),
+        });
+      } catch {
+        // cancel is cleanup; the failing check below is authoritative
+      }
     }
 
     checks.push({
