@@ -256,6 +256,38 @@ describe("HermesBridgeServer", () => {
 
       const denials = await (await fetch(`${base}/preflight-denials`)).json() as Array<{ code: string }>;
       expect(denials.some((denial) => denial.code === "legacy_preflight_denied")).toBe(true);
+
+      // A second denial gives ?limit something to tail past.
+      const secondDenial = await fetch(`${base}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          request_id: "req_bridge_traversal_2",
+          session_id: session.session_id,
+          execution_id: "../../escaped-run-2",
+          objective: "Attempt to escape the bridge state root again.",
+          workdir,
+          allowed_tools: ["bash"],
+          allowed_actions: ["read"],
+          timeout_seconds: 20,
+          output_dir: outputDir,
+          metadata: {
+            mission_id: "mission-bridge-traversal",
+            run_id: "run-bridge-traversal-2",
+            step_id: "step-1",
+          },
+        }),
+      });
+      expect(secondDenial.status).toBe(400);
+
+      const tailed = await (await fetch(`${base}/preflight-denials?limit=1`)).json() as Array<{ request_id?: string }>;
+      expect(tailed).toHaveLength(1);
+      expect(tailed[0].request_id).toBe("req_bridge_traversal_2");
+
+      const badLimit = await fetch(`${base}/preflight-denials?limit=0x10`);
+      expect(badLimit.status).toBe(400);
+      const zeroLimit = await fetch(`${base}/preflight-denials?limit=0`);
+      expect(zeroLimit.status).toBe(400);
     } finally {
       await server.stop();
     }

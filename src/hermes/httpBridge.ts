@@ -252,7 +252,19 @@ export class HermesBridgeServer {
     }
 
     if (method === "GET" && path === "/preflight-denials") {
-      json(res, 200, await this.stateStore.loadPreflightDenials());
+      const denials = await this.stateStore.loadPreflightDenials();
+      // The denial log is append-only and unbounded on a long-lived bridge;
+      // ?limit=N lets operators tail the most recent records instead of
+      // shipping the whole history on every poll.
+      const limitRaw = url.searchParams.get("limit");
+      if (limitRaw === null) {
+        json(res, 200, denials);
+        return;
+      }
+      if (!/^\d+$/.test(limitRaw) || Number(limitRaw) < 1) {
+        throw new BridgeRequestError(400, `limit must be a positive integer, got ${JSON.stringify(limitRaw)}`);
+      }
+      json(res, 200, denials.slice(-Number(limitRaw)));
       return;
     }
 
