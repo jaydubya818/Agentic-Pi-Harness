@@ -57,58 +57,67 @@ export async function runHermesSmoke(argv: string[] = process.argv.slice(2)): Pr
   const adapter = new HermesAdapter({ command: args.command ?? detected.binaryPath ?? undefined });
   const session = await adapter.start_session(args.workdir, { profile: args.profile });
 
-  const firstPath = join(args.outputDir, "smoke-1.md");
-  const secondPath = join(args.outputDir, "smoke-2.md");
+  try {
+    const firstPath = join(args.outputDir, "smoke-1.md");
+    const secondPath = join(args.outputDir, "smoke-2.md");
 
-  const request1 = HermesTaskRequestSchema.parse({
-    request_id: "req_smoke_1",
-    session_id: session.session_id,
-    objective: `Create ${firstPath} with a one-sentence message proving Hermes completed smoke step 1. Return the required structured result block only.`,
-    workdir: args.workdir,
-    allowed_tools: ["bash"],
-    allowed_actions: ["write"],
-    timeout_seconds: args.timeoutSeconds,
-    output_dir: args.outputDir,
-    metadata: {
-      mission_id: "smoke-mission",
-      run_id: "smoke-run-1",
-      step_id: "smoke-step-1",
-    },
-  });
+    const request1 = HermesTaskRequestSchema.parse({
+      request_id: "req_smoke_1",
+      session_id: session.session_id,
+      objective: `Create ${firstPath} with a one-sentence message proving Hermes completed smoke step 1. Return the required structured result block only.`,
+      workdir: args.workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["write"],
+      timeout_seconds: args.timeoutSeconds,
+      output_dir: args.outputDir,
+      metadata: {
+        mission_id: "smoke-mission",
+        run_id: "smoke-run-1",
+        step_id: "smoke-step-1",
+      },
+    });
 
-  await adapter.send_task(session.session_id, request1);
-  const result1 = await adapter.collect_result(session.session_id);
+    await adapter.send_task(session.session_id, request1);
+    const result1 = await adapter.collect_result(session.session_id);
 
-  const request2 = HermesTaskRequestSchema.parse({
-    request_id: "req_smoke_2",
-    session_id: session.session_id,
-    objective: `Create ${secondPath} with a one-sentence message proving Hermes completed smoke step 2 in the same supervised session. Return the required structured result block only.`,
-    workdir: args.workdir,
-    allowed_tools: ["bash"],
-    allowed_actions: ["write"],
-    timeout_seconds: args.timeoutSeconds,
-    output_dir: args.outputDir,
-    metadata: {
-      mission_id: "smoke-mission",
-      run_id: "smoke-run-2",
-      step_id: "smoke-step-2",
-    },
-  });
+    const request2 = HermesTaskRequestSchema.parse({
+      request_id: "req_smoke_2",
+      session_id: session.session_id,
+      objective: `Create ${secondPath} with a one-sentence message proving Hermes completed smoke step 2 in the same supervised session. Return the required structured result block only.`,
+      workdir: args.workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["write"],
+      timeout_seconds: args.timeoutSeconds,
+      output_dir: args.outputDir,
+      metadata: {
+        mission_id: "smoke-mission",
+        run_id: "smoke-run-2",
+        step_id: "smoke-step-2",
+      },
+    });
 
-  await adapter.send_task(session.session_id, request2);
-  const result2 = await adapter.collect_result(session.session_id);
-  const sessionState = JSON.parse(await readFile(join(session.runtime_dir, "session.json"), "utf8")) as {
-    hermes_session_id?: string | null;
-  };
+    await adapter.send_task(session.session_id, request2);
+    const result2 = await adapter.collect_result(session.session_id);
+    const sessionState = JSON.parse(await readFile(join(session.runtime_dir, "session.json"), "utf8")) as {
+      hermes_session_id?: string | null;
+    };
 
-  console.log(JSON.stringify({
-    hermes_binary_path: args.command ?? detected.binaryPath ?? null,
-    hermes_repo_path: detected.repoPath,
-    session,
-    hermes_session_id: sessionState.hermes_session_id ?? null,
-    first: result1,
-    second: result2,
-  }, null, 2));
+    console.log(JSON.stringify({
+      hermes_binary_path: args.command ?? detected.binaryPath ?? null,
+      hermes_repo_path: detected.repoPath,
+      session,
+      hermes_session_id: sessionState.hermes_session_id ?? null,
+      first: result1,
+      second: result2,
+    }, null, 2));
+  } finally {
+    // Release the adapter session: on the failure paths above this
+    // cancels a still-running worker instead of orphaning it when the
+    // process exits, and either way the persisted session.json reads
+    // "closed" -- the same cleanup hermes-doctor and runTaskViaBridge
+    // perform. The catch keeps cleanup from masking the real error.
+    await adapter.close_session(session.session_id).catch(() => {});
+  }
 }
 
 if (isCliEntrypoint(import.meta.url)) {
