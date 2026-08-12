@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { replayTape } from "../../src/cli/replay.js";
 import { whatChanged } from "../../src/cli/what-changed.js";
 import { inspectPolicy } from "../../src/cli/inspect.js";
@@ -131,6 +131,48 @@ describe("hermes cli numeric flag validation", () => {
     expect(__testables.parseArgs(["--timeout", "120"]).timeoutSeconds).toBe(120);
     expect(__testables.parseArgs([]).timeoutSeconds).toBe(900);
   });
+
+  it("hermes-smoke and hermes-demo release their direct adapter session", async () => {
+    const { runHermesSmoke } = await import("../../src/cli/hermes-smoke.js");
+    const { runHermesDemo } = await import("../../src/cli/hermes-demo.js");
+    const { HermesAdapter } = await import("../../src/hermes/adapter.js");
+
+    // The CLIs only expose --command, so delegate to the fake Hermes worker
+    // through a tiny executable wrapper.
+    const fakeWorker = resolve("tests/fixtures/fake-hermes.mjs");
+    const bin = join(await mkdtemp(join(tmpdir(), "pi-cli-fake-bin-")), "hermes");
+    await writeFile(bin, `#!/bin/sh\nexec "${process.execPath}" "${fakeWorker}" "$@"\n`, "utf8");
+    await chmod(bin, 0o755);
+
+    const workdir = await mkdtemp(join(tmpdir(), "pi-cli-close-work-"));
+    const smokeOut = await mkdtemp(join(tmpdir(), "pi-cli-close-smoke-"));
+    const demoOut = await mkdtemp(join(tmpdir(), "pi-cli-close-demo-"));
+
+    const bridgeOnlySnapshot = process.env.BRIDGE_ONLY_GOVERNED_EXECUTION;
+    delete process.env.BRIDGE_ONLY_GOVERNED_EXECUTION;
+    const closeSpy = vi.spyOn(HermesAdapter.prototype, "close_session");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await runHermesSmoke(["--workdir", workdir, "--output-dir", smokeOut, "--timeout", "60", "--command", bin]);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+
+      // The persisted session record must read closed, not idle: before the
+      // close the CLI exited leaving the record's status behind forever.
+      const printed = JSON.parse(String(logSpy.mock.calls.at(-1)?.[0] ?? "{}")) as { session: { runtime_dir: string } };
+      const sessionState = JSON.parse(await readFile(join(printed.session.runtime_dir, "session.json"), "utf8")) as { status: string };
+      expect(sessionState.status).toBe("closed");
+
+      await runHermesDemo(["--workdir", workdir, "--output-dir", demoOut, "--timeout", "60", "--command", bin]);
+      expect(closeSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      if (bridgeOnlySnapshot === undefined) delete process.env.BRIDGE_ONLY_GOVERNED_EXECUTION;
+      else process.env.BRIDGE_ONLY_GOVERNED_EXECUTION = bridgeOnlySnapshot;
+      closeSpy.mockRestore();
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  }, 30000);
 
   it("hermes-smoke and hermes-demo reject invalid --timeout values", async () => {
     const smoke = (await import("../../src/cli/hermes-smoke.js")).__testables;

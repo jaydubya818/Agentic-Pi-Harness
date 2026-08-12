@@ -62,41 +62,50 @@ export async function runHermesDemo(argv: string[] = process.argv.slice(2)): Pro
   const adapter = new HermesAdapter({ command: args.command ?? detected.binaryPath ?? undefined });
   const session = await adapter.start_session(args.workdir, { profile: args.profile });
 
-  const request = HermesTaskRequestSchema.parse({
-    request_id: "req_demo",
-    session_id: session.session_id,
-    objective: args.objective,
-    workdir: args.workdir,
-    allowed_tools: ["bash", "git", "python"],
-    allowed_actions: ["read", "write", "patch", "test"],
-    timeout_seconds: args.timeoutSeconds,
-    output_dir: args.outputDir,
-    metadata: {
-      mission_id: "demo-mission",
-      run_id: "demo-run",
-      step_id: "demo-step",
-    },
-  });
+  try {
+    const request = HermesTaskRequestSchema.parse({
+      request_id: "req_demo",
+      session_id: session.session_id,
+      objective: args.objective,
+      workdir: args.workdir,
+      allowed_tools: ["bash", "git", "python"],
+      allowed_actions: ["read", "write", "patch", "test"],
+      timeout_seconds: args.timeoutSeconds,
+      output_dir: args.outputDir,
+      metadata: {
+        mission_id: "demo-mission",
+        run_id: "demo-run",
+        step_id: "demo-step",
+      },
+    });
 
-  const accepted = await adapter.send_task(session.session_id, request);
+    const accepted = await adapter.send_task(session.session_id, request);
 
-  const eventPrinter = (async () => {
-    for await (const event of adapter.read_events(session.session_id, accepted.execution_id)) {
-      const line = event.type === "task.output"
-        ? String(event.data.line ?? "")
-        : JSON.stringify(event.data);
-      console.log(`[${event.type}] ${line}`);
-    }
-  })();
+    const eventPrinter = (async () => {
+      for await (const event of adapter.read_events(session.session_id, accepted.execution_id)) {
+        const line = event.type === "task.output"
+          ? String(event.data.line ?? "")
+          : JSON.stringify(event.data);
+        console.log(`[${event.type}] ${line}`);
+      }
+    })();
 
-  const result = await adapter.collect_result(session.session_id);
-  await eventPrinter;
+    const result = await adapter.collect_result(session.session_id);
+    await eventPrinter;
 
-  console.log("\nFinal result:\n" + JSON.stringify({
-    hermes_binary_path: args.command ?? detected.binaryPath ?? null,
-    hermes_repo_path: detected.repoPath,
-    result,
-  }, null, 2));
+    console.log("\nFinal result:\n" + JSON.stringify({
+      hermes_binary_path: args.command ?? detected.binaryPath ?? null,
+      hermes_repo_path: detected.repoPath,
+      result,
+    }, null, 2));
+  } finally {
+    // Release the adapter session: on the failure paths above this
+    // cancels a still-running worker instead of orphaning it when the
+    // process exits, and either way the persisted session.json reads
+    // "closed" -- the same cleanup hermes-doctor and runTaskViaBridge
+    // perform. The catch keeps cleanup from masking the real error.
+    await adapter.close_session(session.session_id).catch(() => {});
+  }
 }
 
 if (isCliEntrypoint(import.meta.url)) {
