@@ -187,6 +187,8 @@ Endpoints:
 - `POST /cancel`
 - `GET /runs/:id`
 - `GET /runs/:id/events`
+- `GET /runs/:id/events/stream` — SSE stream (also reachable as `GET /runs/:id/events?stream=1`)
+- `GET /preflight-denials` — persisted preflight denial records; `?limit=N` tails the N most recent
 - `GET /healthz`
 - `GET /meta`
 
