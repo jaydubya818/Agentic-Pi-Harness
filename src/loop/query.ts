@@ -1,3 +1,5 @@
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { ModelClient } from "../adapter/pi-adapter.js";
 import { Checkpoint, EffectRecord, PolicyDecision, StreamEvent } from "../schemas/index.js";
 import { ReplayRecorder } from "../replay/recorder.js";
@@ -99,8 +101,6 @@ function isMutatingTool(toolName: string): boolean {
 }
 
 async function appendJsonl(path: string, value: unknown): Promise<void> {
-  const { appendFile, mkdir } = await import("node:fs/promises");
-  const { dirname } = await import("node:path");
   await mkdir(dirname(path), { recursive: true });
   await appendFile(path, JSON.stringify(value) + "\n", "utf8");
 }
