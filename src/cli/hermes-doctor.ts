@@ -18,6 +18,8 @@ export interface HermesDoctorOptions {
   workdir?: string;
   timeoutMs?: number;
   pollIntervalMs?: number;
+  /** How long to wait for the deadline-expiry cancel to settle the smoke run. */
+  cancelSettleMs?: number;
   knowledgeRoots?: Partial<KnowledgeRoots>;
 }
 
@@ -102,6 +104,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
   const token = options.token ?? process.env.PI_HERMES_BRIDGE_TOKEN ?? await readTokenFile(tokenFile);
   const workdir = options.workdir ?? detected.repoPath ?? process.cwd();
   const pollIntervalMs = options.pollIntervalMs ?? 500;
+  const cancelSettleMs = options.cancelSettleMs ?? 5000;
 
   checks.push({
     name: "detected Hermes binary path",
@@ -250,6 +253,24 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
         });
       } catch {
         // cancel is cleanup; the failing check below is authoritative
+      }
+      // /cancel answers 202 before the run settles. Wait (bounded) for the
+      // terminal record so the session close below does not answer 409 and
+      // outputDir is not deleted out from under a still-writing worker --
+      // and so the check reports the settled status instead of "running".
+      const settleDeadline = Date.now() + cancelSettleMs;
+      while (Date.now() < settleDeadline) {
+        try {
+          const runResponse = await fetch(`${url}/runs/${accepted.execution_id}`, { headers: authHeaders });
+          const latest = await runResponse.json() as HermesRunResponse;
+          if (runResponse.ok && TERMINAL_RUN_STATUSES.includes(latest.status)) {
+            run = latest;
+            break;
+          }
+        } catch {
+          // keep waiting; the settle window is bounded either way
+        }
+        await sleep(pollIntervalMs);
       }
     }
 
