@@ -152,7 +152,9 @@ describe("bridge client run polling", () => {
     createdPaths.push(outRoot);
 
     const previousGraceMs = __bridgeClientTestables.pollSettings.deadlineGraceMs;
+    const previousSettleMs = __bridgeClientTestables.pollSettings.cancelSettleMs;
     __bridgeClientTestables.pollSettings.deadlineGraceMs = 200;
+    __bridgeClientTestables.pollSettings.cancelSettleMs = 300;
     try {
       await expect(runTaskViaBridge({
         objective: "deadline expiry cancel",
@@ -162,6 +164,88 @@ describe("bridge client run polling", () => {
         bridgeUrl: `http://127.0.0.1:${port}`,
       })).rejects.toThrow(/did not produce a result/);
       expect(cancelled).toBe(1);
+    } finally {
+      __bridgeClientTestables.pollSettings.deadlineGraceMs = previousGraceMs;
+      __bridgeClientTestables.pollSettings.cancelSettleMs = previousSettleMs;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 15000);
+
+  it("waits for the deadline-expiry cancel to settle so the session close does not race the run", async () => {
+    let cancelled = 0;
+    let closedWhileRunning = 0;
+    let closed = 0;
+    const server = createServer((req, res) => {
+      if (req.method === "POST" && req.url === "/sessions") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ session_id: "sess_1" }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/sessions/sess_1/close") {
+        // A real bridge answers 409 while the execution is non-terminal.
+        if (cancelled === 0) {
+          closedWhileRunning += 1;
+          res.writeHead(409, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "session has a non-terminal execution" }));
+          return;
+        }
+        closed += 1;
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ session_id: "sess_1", status: "closed" }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/execute") {
+        res.writeHead(202, { "content-type": "application/json" });
+        res.end(JSON.stringify({ execution_id: "exec_1", status: "accepted" }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/cancel") {
+        cancelled += 1;
+        res.writeHead(202, { "content-type": "application/json" });
+        res.end(JSON.stringify({ execution_id: "exec_1", status: "cancelled" }));
+        return;
+      }
+      if (req.url?.startsWith("/runs/exec_1/events")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end("[]");
+        return;
+      }
+      if (req.url?.startsWith("/runs/exec_1")) {
+        if (cancelled === 0) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ status: "running" }));
+          return;
+        }
+        // After the cancel the run settles terminal with a result payload.
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: "cancelled", worker_result: { status: "cancelled" } }));
+        return;
+      }
+      res.writeHead(404, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const outRoot = await mkdtemp(join(tmpdir(), "pi-bridge-poll-"));
+    createdPaths.push(outRoot);
+
+    const previousGraceMs = __bridgeClientTestables.pollSettings.deadlineGraceMs;
+    __bridgeClientTestables.pollSettings.deadlineGraceMs = 200;
+    try {
+      const run = await runTaskViaBridge({
+        objective: "deadline expiry cancel settles",
+        workdir: outRoot,
+        outRoot,
+        timeoutSeconds: 1,
+        bridgeUrl: `http://127.0.0.1:${port}`,
+      });
+      expect(cancelled).toBe(1);
+      // The settled cancelled run is returned like any other terminal run.
+      expect(run.result.status).toBe("cancelled");
+      // The session close landed after the run settled, not against a
+      // still-running execution (which a real bridge rejects with 409).
+      expect(closedWhileRunning).toBe(0);
+      expect(closed).toBe(1);
     } finally {
       __bridgeClientTestables.pollSettings.deadlineGraceMs = previousGraceMs;
       await new Promise<void>((resolve) => server.close(() => resolve()));

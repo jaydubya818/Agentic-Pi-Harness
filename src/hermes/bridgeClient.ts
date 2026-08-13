@@ -43,6 +43,8 @@ const TERMINAL_RUN_STATUSES = ["completed", "failed", "cancelled", "interrupted"
 const pollSettings = {
   /** Slack past the task timeout before the poll loop gives up on the run. */
   deadlineGraceMs: 5000,
+  /** How long to wait for the deadline-expiry cancel to settle the run. */
+  cancelSettleMs: 5000,
 };
 
 export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<BridgeGovernedRun> {
@@ -176,6 +178,28 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
         });
       } catch {
         // cancel is cleanup; the missing-result error below is authoritative
+      }
+      // /cancel answers 202 before the run actually settles. Without a
+      // bounded wait for the terminal record, the session close in the
+      // finally block races the still-settling run and answers 409, leaking
+      // the adapter session on an external long-lived bridge -- and the
+      // error below reports a stale "running" status. If the run settles
+      // with a result payload, return it like any other terminal run.
+      const settleDeadline = Date.now() + pollSettings.cancelSettleMs;
+      while (Date.now() < settleDeadline) {
+        try {
+          const runResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}`, { headers: authHeaders });
+          if (runResponse.ok) {
+            const latest: any = await runResponse.json();
+            if (TERMINAL_RUN_STATUSES.includes(latest.status)) {
+              run = latest;
+              break;
+            }
+          }
+        } catch {
+          // keep waiting; the settle window is bounded either way
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
       }
     }
 
