@@ -183,6 +183,7 @@ describe("runHermesDoctor", () => {
       workdir,
       timeoutMs: 100,
       pollIntervalMs: 10,
+      cancelSettleMs: 50,
       knowledgeRoots: roots,
     });
 
@@ -192,6 +193,78 @@ describe("runHermesDoctor", () => {
     // doctor leaves both the run and the session behind on the bridge.
     expect(cancelBody).toContain("exec_doctor");
     expect(sessionClosed).toBe(true);
+  });
+
+  it("reports the settled status when the deadline-expiry cancel lands", async () => {
+    const workdir = await makeTempDir("pi-hermes-doctor-work-");
+    const repoPath = await makeTempDir("pi-hermes-doctor-repo-");
+    const roots = {
+      agenticKbRoot: await makeTempDir("pi-hermes-doctor-kb-"),
+      llmWikiRoot: await makeTempDir("pi-hermes-doctor-wiki-"),
+    };
+    const hermesBinary = join(await makeTempDir("pi-hermes-doctor-bin-"), "hermes");
+    await makeExecutableFile(hermesBinary);
+    process.env.HERMES_COMMAND = hermesBinary;
+    process.env.HERMES_REPO_PATH = repoPath;
+
+    let cancelled = 0;
+    let closedWhileRunning = 0;
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? "GET";
+
+      if (url.endsWith("/healthz")) {
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/meta") && !init?.headers) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), { status: 401, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/meta")) {
+        return new Response(JSON.stringify({ binaryPath: hermesBinary, repoPath, authRequired: true }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/sessions") && method === "POST") {
+        return new Response(JSON.stringify({ session_id: "sess_doctor" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/sessions/sess_doctor/close") && method === "POST") {
+        if (cancelled === 0) closedWhileRunning += 1;
+        return new Response(JSON.stringify({ session_id: "sess_doctor", status: "closed" }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/execute") && method === "POST") {
+        return new Response(JSON.stringify({ execution_id: "exec_doctor", status: "accepted" }), { status: 202, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/cancel") && method === "POST") {
+        cancelled += 1;
+        return new Response(JSON.stringify({ execution_id: "exec_doctor", status: "cancelled" }), { status: 202, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/runs/exec_doctor")) {
+        // Running until the cancel lands, then terminal.
+        const status = cancelled === 0 ? "running" : "cancelled";
+        return new Response(JSON.stringify({ status }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url.endsWith("/runs/exec_doctor/events")) {
+        return new Response(JSON.stringify({ event_format: "json", items: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      throw new Error(`unexpected fetch ${method} ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const checks = await runHermesDoctor({
+      url: "http://127.0.0.1:8787",
+      token: "doctor-secret",
+      workdir,
+      timeoutMs: 100,
+      pollIntervalMs: 10,
+      knowledgeRoots: roots,
+    });
+
+    const smoke = checks.find((check) => check.name === "bridge execute smoke test completes");
+    expect(smoke?.ok).toBe(false);
+    // The settled post-cancel status, not a stale "running"/"timeout".
+    expect(smoke?.detail).toBe("cancelled");
+    // The session close never raced a non-terminal execution.
+    expect(closedWhileRunning).toBe(0);
+    expect(cancelled).toBe(1);
   });
 
   it("reports an unreachable bridge as a failing check instead of crashing", async () => {
