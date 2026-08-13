@@ -415,6 +415,28 @@ export class HermesBridgeServer {
       return;
     }
 
+    if (method === "GET" && path === "/runs") {
+      // Operators previously had no way to enumerate runs over HTTP: run
+      // ids had to come from out-of-band records or the state root on
+      // disk. Summaries only (no events or envelopes) keep the payload
+      // small on a long-lived bridge; ?limit=N tails the most recent.
+      const limitRaw = url.searchParams.get("limit");
+      let limit: number | null = null;
+      if (limitRaw !== null) {
+        if (!/^\d+$/.test(limitRaw) || Number(limitRaw) < 1) {
+          throw new BridgeRequestError(400, `limit must be a positive integer, got ${JSON.stringify(limitRaw)}`);
+        }
+        limit = Number(limitRaw);
+      }
+      // Map insertion order is acceptance order (restored runs first).
+      const items = Array.from(this.runs.values()).map((run) => serializeRunSummary(run));
+      json(res, 200, {
+        count: items.length,
+        items: limit === null ? items : items.slice(-limit),
+      });
+      return;
+    }
+
     const runMatch = path.match(/^\/runs\/([^/]+)$/);
     if (method === "GET" && runMatch) {
       const run = this.runs.get(runMatch[1]);
@@ -1198,6 +1220,26 @@ function serializeRun(run: HermesBridgeRunRecord): Record<string, unknown> {
       events: `/runs/${run.accepted.execution_id}/events`,
       events_raw: `/runs/${run.accepted.execution_id}/events?view=raw`,
       stream: `/runs/${run.accepted.execution_id}/events?stream=1`,
+    },
+  };
+}
+
+function serializeRunSummary(run: HermesBridgeRunRecord): Record<string, unknown> {
+  return {
+    execution_id: run.accepted.execution_id,
+    request_id: run.accepted.request_id,
+    session_id: run.accepted.session_id,
+    mission_id: run.v2Task?.mission_id ?? run.request.metadata?.mission_id ?? null,
+    run_id: run.v2Task?.run_id ?? run.request.metadata?.run_id ?? null,
+    run_kind: run.v2Task ? "contract_v2" : "legacy",
+    status: run.status,
+    state: getRunState(run),
+    terminal: isTerminalRunRecord(run),
+    failure_class: run.failureClass ?? null,
+    error: run.error,
+    links: {
+      run: `/runs/${run.accepted.execution_id}`,
+      events: `/runs/${run.accepted.execution_id}/events`,
     },
   };
 }

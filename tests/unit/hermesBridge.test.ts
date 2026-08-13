@@ -378,6 +378,99 @@ describe("HermesBridgeServer", () => {
     }
   }, 15000);
 
+  it("lists run summaries on GET /runs with tail limiting", async () => {
+    const workdir = await makeTempDir("pi-hermes-bridge-list-work-");
+    const outputDirA = await makeTempDir("pi-hermes-bridge-list-out-a-");
+    const outputDirB = await makeTempDir("pi-hermes-bridge-list-out-b-");
+    const stateRoot = await makeTempDir("pi-hermes-bridge-list-state-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    try {
+      const emptyResponse = await fetch(`${base}/runs`);
+      expect(emptyResponse.status).toBe(200);
+      expect(await emptyResponse.json()).toEqual({ count: 0, items: [] });
+
+      const sessionResponse = await fetch(`${base}/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workdir }),
+      });
+      const session = await sessionResponse.json() as { session_id: string };
+
+      const execute = async (requestId: string, outputDir: string) => {
+        const executeResponse = await fetch(`${base}/execute`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            request_id: requestId,
+            session_id: session.session_id,
+            objective: "Write a report to the output dir and summarize it.",
+            workdir,
+            allowed_tools: ["bash"],
+            allowed_actions: ["read", "write"],
+            timeout_seconds: 20,
+            output_dir: outputDir,
+            metadata: { mission_id: "mission-list", run_id: "run-list", step_id: requestId },
+          }),
+        });
+        expect(executeResponse.status).toBe(202);
+        const accepted = await executeResponse.json() as { execution_id: string };
+        for (let i = 0; i < 40; i++) {
+          const runResponse = await fetch(`${base}/runs/${accepted.execution_id}`);
+          const run = await runResponse.json() as { status: string };
+          if (run.status === "completed") return accepted.execution_id;
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+        }
+        throw new Error(`run ${accepted.execution_id} did not complete`);
+      };
+
+      // One session allows one execution at a time; run them sequentially.
+      const first = await execute("req_list_1", outputDirA);
+      const second = await execute("req_list_2", outputDirB);
+
+      const listResponse = await fetch(`${base}/runs`);
+      expect(listResponse.status).toBe(200);
+      const list = await listResponse.json() as { count: number; items: Array<Record<string, unknown>> };
+      expect(list.count).toBe(2);
+      expect(list.items.map((item) => item.execution_id)).toEqual([first, second]);
+      const summary = list.items[0];
+      expect(summary.run_kind).toBe("legacy");
+      expect(summary.status).toBe("completed");
+      expect(summary.terminal).toBe(true);
+      expect(summary.mission_id).toBe("mission-list");
+      expect(summary.links).toEqual({ run: `/runs/${first}`, events: `/runs/${first}/events` });
+      // Summaries stay light: no event bodies or task envelopes inline.
+      expect(summary.events).toBeUndefined();
+      expect(summary.task_envelope).toBeUndefined();
+
+      // ?limit=N tails the most recently accepted runs.
+      const tailResponse = await fetch(`${base}/runs?limit=1`);
+      const tail = await tailResponse.json() as { count: number; items: Array<Record<string, unknown>> };
+      expect(tail.count).toBe(2);
+      expect(tail.items.map((item) => item.execution_id)).toEqual([second]);
+
+      const badLimit = await fetch(`${base}/runs?limit=0`);
+      expect(badLimit.status).toBe(400);
+    } finally {
+      await server.stop();
+    }
+  }, 20000);
+
   it("reloads persisted sessions, runs, and event logs after restart", async () => {
     const workdir = await makeTempDir("pi-hermes-bridge-persist-work-");
     const outputDir = await makeTempDir("pi-hermes-bridge-persist-out-");
