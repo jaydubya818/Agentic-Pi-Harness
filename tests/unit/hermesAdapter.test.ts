@@ -251,6 +251,46 @@ describe("HermesAdapter", () => {
     expect(rawLog.length).toBeGreaterThan(100000);
   }, 15000);
 
+  it("caps the buffered partial line when a worker streams a giant newline-free line", async () => {
+    const workdir = await makeTempDir("pi-hermes-work-");
+    const outputDir = await makeTempDir("pi-hermes-out-");
+    const adapter = await createAdapter({ maxRetainedOutputChars: 4096 });
+    const session = await adapter.start_session(workdir);
+
+    const request = HermesTaskRequestSchema.parse({
+      request_id: "req_test_megaline",
+      session_id: session.session_id,
+      objective: "__MEGALINE__ stream one enormous line, then emit the structured result.",
+      workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["read", "write"],
+      timeout_seconds: 30,
+      output_dir: outputDir,
+      metadata: { mission_id: "mission-megaline", run_id: "run-megaline", step_id: "step-megaline" },
+    });
+
+    await adapter.send_task(session.session_id, request);
+    const result = await adapter.collect_result(session.session_id);
+
+    expect(result.status).toBe("completed");
+    expect(result.structured_output).toBe(true);
+    // The ~320KB newline-free line must be retained (and emitted) only up to
+    // the cap plus at most one trailing chunk, not buffered in full.
+    const eventLog = await readFile(join(outputDir, ".pi-hermes", "events.jsonl"), "utf8");
+    const outputLines = eventLog
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { type: string; data?: { line?: string } })
+      .filter((event) => event.type === "task.output")
+      .map((event) => String(event.data?.line ?? ""));
+    const longest = Math.max(...outputLines.map((line) => line.length));
+    expect(longest).toBeGreaterThan(0);
+    expect(longest).toBeLessThanOrEqual(4096 + 65536);
+    // The full stream still lands on disk regardless of the in-memory cap.
+    const rawLog = await readFile(join(outputDir, ".pi-hermes", "hermes.raw.log"), "utf8");
+    expect(rawLog.length).toBeGreaterThan(300000);
+  }, 15000);
+
   it("cancel force-kill timer does not kill a subsequent execution", async () => {
     const workdir = await makeTempDir("pi-hermes-work-");
     const outputDir = await makeTempDir("pi-hermes-out-");
