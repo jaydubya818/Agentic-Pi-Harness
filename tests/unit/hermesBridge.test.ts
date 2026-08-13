@@ -471,6 +471,108 @@ describe("HermesBridgeServer", () => {
     }
   }, 20000);
 
+  it("cancels the accepted worker and answers 500 when bridge bookkeeping fails post-accept", async () => {
+    const workdir = await makeTempDir("pi-hermes-bridge-postaccept-work-");
+    const outputDir = await makeTempDir("pi-hermes-bridge-postaccept-out-");
+    const stateRoot = await makeTempDir("pi-hermes-bridge-postaccept-state-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    // Sabotage the first post-accept persist: the worker has already been
+    // spawned by the adapter when persistRun runs.
+    const internals = server as unknown as { stateStore: { persistRun: (record: unknown) => Promise<void> } };
+    const originalPersistRun = internals.stateStore.persistRun.bind(internals.stateStore);
+    let failNextPersist = true;
+    internals.stateStore.persistRun = async (record: unknown) => {
+      if (failNextPersist) {
+        failNextPersist = false;
+        throw new Error("disk full (injected)");
+      }
+      return originalPersistRun(record);
+    };
+
+    try {
+      const sessionResponse = await fetch(`${base}/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workdir }),
+      });
+      const session = await sessionResponse.json() as { session_id: string };
+
+      const makeBody = (requestId: string) => JSON.stringify({
+        request_id: requestId,
+        session_id: session.session_id,
+        objective: "Write a report to the output dir and summarize it.",
+        workdir,
+        allowed_tools: ["bash"],
+        allowed_actions: ["read", "write"],
+        timeout_seconds: 20,
+        output_dir: outputDir,
+        metadata: { mission_id: "mission-postaccept", run_id: "run-postaccept", step_id: "step-1" },
+      });
+
+      const failedExecute = await fetch(`${base}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: makeBody("req_postaccept_1"),
+      });
+      // A post-accept bookkeeping failure is a bridge error, not a
+      // preflight denial: the worker was already accepted and spawned.
+      expect(failedExecute.status).toBe(500);
+      const failedBody = await failedExecute.json() as { error: string };
+      expect(failedBody.error).toContain("disk full (injected)");
+
+      const denials = await (await fetch(`${base}/preflight-denials`)).json() as unknown[];
+      expect(denials).toEqual([]);
+
+      // The phantom run record is dropped rather than wedging the bridge.
+      const list = await (await fetch(`${base}/runs`)).json() as { count: number };
+      expect(list.count).toBe(0);
+
+      // The session is released (worker cancelled), so a follow-up execute
+      // on the same session is accepted and completes.
+      let accepted: { execution_id: string } | null = null;
+      for (let i = 0; i < 40 && !accepted; i++) {
+        const retryExecute = await fetch(`${base}/execute`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: makeBody("req_postaccept_2"),
+        });
+        if (retryExecute.status === 202) {
+          accepted = await retryExecute.json() as { execution_id: string };
+          break;
+        }
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+      }
+      expect(accepted).not.toBeNull();
+
+      let status = "accepted";
+      for (let i = 0; i < 40; i++) {
+        const run = await (await fetch(`${base}/runs/${accepted!.execution_id}`)).json() as { status: string };
+        status = run.status;
+        if (status === "completed") break;
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+      }
+      expect(status).toBe("completed");
+    } finally {
+      await server.stop();
+    }
+  }, 20000);
+
   it("reloads persisted sessions, runs, and event logs after restart", async () => {
     const workdir = await makeTempDir("pi-hermes-bridge-persist-work-");
     const outputDir = await makeTempDir("pi-hermes-bridge-persist-out-");

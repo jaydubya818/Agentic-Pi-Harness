@@ -307,6 +307,10 @@ export class HermesBridgeServer {
           const accepted = await this.executeV2(parsedV2.data);
           json(res, 202, accepted);
         } catch (error) {
+          if (error instanceof BridgePostAcceptError) {
+            json(res, 500, { error: error.message });
+            return;
+          }
           await this.persistPreflightDenial({
             code: "v2_preflight_denied",
             message: error instanceof Error ? error.message : String(error),
@@ -337,6 +341,10 @@ export class HermesBridgeServer {
         const accepted = await this.executeLegacy(parsedLegacy.data);
         json(res, 202, accepted);
       } catch (error) {
+        if (error instanceof BridgePostAcceptError) {
+          json(res, 500, { error: error.message });
+          return;
+        }
         await this.persistPreflightDenial({
           code: "legacy_preflight_denied",
           message: error instanceof Error ? error.message : String(error),
@@ -527,20 +535,24 @@ export class HermesBridgeServer {
       }
     }
     const accepted = await this.adapter.send_task(request.session_id, request);
-    const record: HermesBridgeRunRecord = {
-      accepted,
-      request: parsedLegacyRequest(request),
-      status: "accepted",
-      session,
-      events: [],
-      result: null,
-      error: null,
-    };
-    this.runs.set(accepted.execution_id, record);
-    await this.stateStore.persistRun(record);
-    const watcher = this.watchRun(record).finally(() => this.activeWatchers.delete(watcher));
-    this.activeWatchers.add(watcher);
-    return accepted;
+    try {
+      const record: HermesBridgeRunRecord = {
+        accepted,
+        request: parsedLegacyRequest(request),
+        status: "accepted",
+        session,
+        events: [],
+        result: null,
+        error: null,
+      };
+      this.runs.set(accepted.execution_id, record);
+      await this.stateStore.persistRun(record);
+      const watcher = this.watchRun(record).finally(() => this.activeWatchers.delete(watcher));
+      this.activeWatchers.add(watcher);
+      return accepted;
+    } catch (error) {
+      throw await this.releaseFailedAccept(session.session_id, accepted.execution_id, error);
+    }
   }
 
   private async executeV2(task: PiHermesTaskEnvelopeV2) {
@@ -574,32 +586,62 @@ export class HermesBridgeServer {
     });
 
     const accepted = await this.adapter.send_task(task.session_id, legacyRequest);
-    const record: HermesBridgeRunRecord = {
-      accepted,
-      request: legacyRequest,
-      status: "accepted",
-      state: "accepted",
-      session,
-      events: [],
-      result: null,
-      error: null,
-      v2Task: task,
-      v2Result: null,
-      failureClass: null,
-    };
-    this.runs.set(accepted.execution_id, record);
-    await this.stateStore.persistRun(record);
-    await this.emitV2Event(record, {
-      event_type: "run.accepted",
-      state: "accepted",
-      agent: "pi",
-      message: "Run accepted by bridge",
-      payload: {},
+    try {
+      const record: HermesBridgeRunRecord = {
+        accepted,
+        request: legacyRequest,
+        status: "accepted",
+        state: "accepted",
+        session,
+        events: [],
+        result: null,
+        error: null,
+        v2Task: task,
+        v2Result: null,
+        failureClass: null,
+      };
+      this.runs.set(accepted.execution_id, record);
+      await this.stateStore.persistRun(record);
+      await this.emitV2Event(record, {
+        event_type: "run.accepted",
+        state: "accepted",
+        agent: "pi",
+        message: "Run accepted by bridge",
+        payload: {},
+      });
+      await this.emitKbPreflightAllowedEvents(record);
+      const watcher = this.watchRun(record).finally(() => this.activeWatchers.delete(watcher));
+      this.activeWatchers.add(watcher);
+      return accepted;
+    } catch (error) {
+      throw await this.releaseFailedAccept(task.session_id, accepted.execution_id, error);
+    }
+  }
+
+  /**
+   * A failure between send_task and watcher start (persist, event emit)
+   * previously left a live worker with nothing supervising it: the caller
+   * got a 400 "preflight denied" while the phantom run record stayed
+   * "accepted" forever, wedging the session (close answers 409) and the
+   * execution id. Best-effort cancel the worker, drop the phantom record,
+   * and surface the failure as a bridge error instead of a denial.
+   */
+  private async releaseFailedAccept(sessionId: string, executionId: string, error: unknown): Promise<BridgePostAcceptError> {
+    try {
+      await this.adapter.cancel(sessionId, executionId);
+    } catch {
+      // the worker may already be gone; dropping the record below is the
+      // part that unwedges the session either way
+    }
+    this.runs.delete(executionId);
+    this.logger.log("error", "hermes.bridge.post_accept_failure", {
+      executionId,
+      error: String(error),
     });
-    await this.emitKbPreflightAllowedEvents(record);
-    const watcher = this.watchRun(record).finally(() => this.activeWatchers.delete(watcher));
-    this.activeWatchers.add(watcher);
-    return accepted;
+    return new BridgePostAcceptError(
+      `bridge failed to record accepted execution ${executionId}: ${error instanceof Error ? error.message : String(error)}`,
+      error,
+    );
   }
 
   private async watchRun(run: HermesBridgeRunRecord): Promise<void> {
@@ -1319,6 +1361,18 @@ const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 function assertExecutionIdBody(body: { execution_id?: unknown }): void {
   if (typeof body.execution_id !== "string" || body.execution_id.length === 0) {
     throw new BridgeRequestError(400, "execution_id must be a non-empty string");
+  }
+}
+
+/**
+ * A failure *after* the adapter accepted the task (persist, event emit) is
+ * not a preflight denial: the worker is already running. Distinguish it so
+ * the /execute handler answers 500 instead of recording a bogus denial.
+ */
+class BridgePostAcceptError extends Error {
+  constructor(message: string, readonly cause: unknown) {
+    super(message);
+    this.name = "BridgePostAcceptError";
   }
 }
 
