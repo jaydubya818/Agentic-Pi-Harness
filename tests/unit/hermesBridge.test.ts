@@ -663,6 +663,14 @@ describe("HermesBridgeServer", () => {
       expect(events.event_format).toBe("legacy");
       expect(events.items.some((event) => event.type === "task.started")).toBe(true);
       expect(events.items.some((event) => event.type === "task.completed")).toBe(true);
+
+      // Restored runs are enumerable via the listing endpoint too.
+      const listResponse = await fetch(`${secondBase}/runs`);
+      expect(listResponse.status).toBe(200);
+      const list = await listResponse.json() as { count: number; items: Array<{ execution_id: string; terminal: boolean }> };
+      expect(list.count).toBe(1);
+      expect(list.items[0].execution_id).toBe(executionId);
+      expect(list.items[0].terminal).toBe(true);
     } finally {
       await secondServer.stop();
     }
