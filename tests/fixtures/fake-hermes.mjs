@@ -15,6 +15,7 @@ const outputDir = outputDirMatch ? outputDirMatch[1].trim() : null;
 const slow = query.includes("__SLOW__");
 const fail = query.includes("__FAIL__");
 const noisy = query.includes("__NOISY__");
+const megaline = query.includes("__MEGALINE__");
 const decoySession = query.includes("__DECOY_SESSION__");
 
 async function finish(code = 0, error = null) {
@@ -65,6 +66,16 @@ process.on("SIGTERM", async () => {
 
   if (fail) {
     await finish(3, "fake hermes failure");
+    return;
+  }
+
+  if (megaline) {
+    // One giant line with no newline until the very end: exercises the
+    // adapter's partial-line retention cap.
+    const filler = "m".repeat(8192);
+    for (let i = 0; i < 40; i++) process.stdout.write(filler);
+    process.stdout.write("\n");
+    await finish(0, null);
     return;
   }
 

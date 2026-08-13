@@ -494,6 +494,13 @@ export class HermesAdapter {
     const combined = active.partialLine + normalized;
     const lines = combined.split("\n");
     active.partialLine = lines.pop() ?? "";
+    if (active.partialLine.length > this.maxRetainedOutputChars) {
+      // A worker that streams one enormous line with no newline would grow
+      // partialLine without bound, defeating the rawOutput retention cap
+      // above. Keep the tail: the line is only ever consumed from its end
+      // (flushed as a task.output event when the newline or exit arrives).
+      active.partialLine = active.partialLine.slice(-this.maxRetainedOutputChars);
+    }
 
     for (const rawLine of lines) {
       const line = stripAnsi(rawLine).trimEnd();
