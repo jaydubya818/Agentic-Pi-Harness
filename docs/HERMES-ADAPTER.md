@@ -185,6 +185,7 @@ Endpoints:
 - `POST /execute`
 - `POST /interrupt`
 - `POST /cancel`
+- `GET /runs` — run summaries in acceptance order (no events or envelopes inline); `?limit=N` tails the N most recent
 - `GET /runs/:id`
 - `GET /runs/:id/events`
 - `GET /runs/:id/events/stream` — SSE stream (also reachable as `GET /runs/:id/events?stream=1`)
