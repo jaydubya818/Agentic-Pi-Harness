@@ -45,6 +45,13 @@ const pollSettings = {
   deadlineGraceMs: 5000,
   /** How long to wait for the deadline-expiry cancel to settle the run. */
   cancelSettleMs: 5000,
+  /**
+   * Per-request abort timeout for the poll/settle/cleanup requests. Without
+   * it a bridge that accepts the connection and never answers parks each
+   * fetch on undici's ~300s default, stalling the loop far past the run
+   * deadline it exists to enforce.
+   */
+  requestTimeoutMs: 10_000,
 };
 
 export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<BridgeGovernedRun> {
@@ -144,7 +151,7 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
     const deadline = Date.now() + ((input.timeoutSeconds ?? 900) * 1000) + pollSettings.deadlineGraceMs;
     while (Date.now() < deadline) {
       try {
-        const runResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}`, { headers: authHeaders });
+        const runResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}`, { headers: authHeaders, signal: AbortSignal.timeout(pollSettings.requestTimeoutMs) });
         if (runResponse.ok) {
           run = await runResponse.json();
           const terminal = TERMINAL_RUN_STATUSES.includes(run.status);
@@ -175,6 +182,7 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
           method: "POST",
           headers: { ...authHeaders, "content-type": "application/json" },
           body: JSON.stringify({ execution_id: accepted.execution_id }),
+          signal: AbortSignal.timeout(pollSettings.requestTimeoutMs),
         });
       } catch {
         // cancel is cleanup; the missing-result error below is authoritative
@@ -188,7 +196,7 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
       const settleDeadline = Date.now() + pollSettings.cancelSettleMs;
       while (Date.now() < settleDeadline) {
         try {
-          const runResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}`, { headers: authHeaders });
+          const runResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}`, { headers: authHeaders, signal: AbortSignal.timeout(pollSettings.requestTimeoutMs) });
           if (runResponse.ok) {
             const latest: any = await runResponse.json();
             if (TERMINAL_RUN_STATUSES.includes(latest.status)) {
@@ -204,7 +212,7 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
     }
 
     try {
-      const eventsResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}/events?view=raw`, { headers: authHeaders });
+      const eventsResponse = await fetch(`${baseUrl}/runs/${accepted.execution_id}/events?view=raw`, { headers: authHeaders, signal: AbortSignal.timeout(pollSettings.requestTimeoutMs) });
       const events = eventsResponse.ok ? await eventsResponse.json() as Array<Record<string, unknown>> : [];
       if (Array.isArray(events) && events.length > 0) await writeFile(eventLogPath, events.map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
     } catch {
@@ -246,7 +254,7 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
     // mask the run's real outcome.
     if (adapterSession) {
       try {
-        await fetch(`${baseUrl}/sessions/${adapterSession.session_id}/close`, { method: "POST", headers: authHeaders });
+        await fetch(`${baseUrl}/sessions/${adapterSession.session_id}/close`, { method: "POST", headers: authHeaders, signal: AbortSignal.timeout(pollSettings.requestTimeoutMs) });
       } catch {
         // ignore — session close is cleanup, not part of the run contract
       }

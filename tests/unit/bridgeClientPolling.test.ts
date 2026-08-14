@@ -251,4 +251,55 @@ describe("bridge client run polling", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   }, 15000);
+
+  it("aborts a hung poll request instead of stalling past the run deadline", async () => {
+    // The bridge accepts /runs connections and never answers: without a
+    // per-request abort timeout each poll parks on undici's ~300s default
+    // and the deadline the loop exists to enforce is never rechecked.
+    const hungResponses: import("node:http").ServerResponse[] = [];
+    const server = createServer((req, res) => {
+      if (req.method === "POST" && req.url === "/sessions") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ session_id: "sess_1" }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/execute") {
+        res.writeHead(202, { "content-type": "application/json" });
+        res.end(JSON.stringify({ execution_id: "exec_1", status: "accepted" }));
+        return;
+      }
+      if (req.method === "POST" && req.url === "/cancel") {
+        res.writeHead(202, { "content-type": "application/json" });
+        res.end(JSON.stringify({ execution_id: "exec_1", status: "cancelled" }));
+        return;
+      }
+      // Everything else (including every /runs poll) hangs forever.
+      hungResponses.push(res);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const outRoot = await mkdtemp(join(tmpdir(), "pi-bridge-poll-"));
+    createdPaths.push(outRoot);
+
+    const settings = __bridgeClientTestables.pollSettings;
+    const previous = { ...settings };
+    settings.deadlineGraceMs = 200;
+    settings.cancelSettleMs = 300;
+    settings.requestTimeoutMs = 250;
+    const startedAt = Date.now();
+    try {
+      await expect(runTaskViaBridge({
+        objective: "hung bridge poll",
+        workdir: outRoot,
+        outRoot,
+        timeoutSeconds: 1,
+        bridgeUrl: `http://127.0.0.1:${port}`,
+      })).rejects.toThrow(/did not produce a result/);
+      expect(Date.now() - startedAt).toBeLessThan(8000);
+    } finally {
+      Object.assign(settings, previous);
+      for (const res of hungResponses) res.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 15000);
 });
