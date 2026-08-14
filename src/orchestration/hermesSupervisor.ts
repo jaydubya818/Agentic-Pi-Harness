@@ -1,6 +1,5 @@
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { NoopLogger, type Logger } from "../obs/logger.js";
-import { digestPolicy, writeSessionStartProvenance } from "../session/provenance.js";
 import {
   runTaskViaBridge,
   type BridgeGovernedRun,
@@ -46,11 +45,6 @@ export interface HermesSupervisorRun {
 export async function runHermesSupervisorTask(input: RunHermesSupervisorInput): Promise<HermesSupervisorRun> {
   const logger = input.logger ?? new NoopLogger();
   const outRoot = resolve(input.outRoot);
-  const policyDigest = digestPolicy({
-    supervisor: "hermes",
-    allowedTools: input.allowedTools ?? ["bash", "git", "python"],
-    allowedActions: input.allowedActions ?? ["read", "write", "patch", "test"],
-  });
 
   logger.log("info", "hermes.supervisor.bridge_routed", {
     bridgeUrl: input.bridgeUrl ?? "embedded",
@@ -75,16 +69,9 @@ export async function runHermesSupervisorTask(input: RunHermesSupervisorInput): 
     adapterOptions: input.adapterOptions,
   });
 
-  await writeSessionStartProvenance(join(result.session_dir, "provenance.json"), {
-    sessionId: result.pi_session_id,
-    loopGitSha: "dev",
-    repoGitSha: null,
-    provider: "hermes-bridge",
-    model: "hermes-agent",
-    costTableVersion: "n/a",
-    piMdDigest: null,
-    policyDigest,
-  });
-
+  // Session-start provenance is written by runTaskViaBridge before the run
+  // begins; rewriting the same manifest here after completion stamped a
+  // post-run createdAt over the genuine start time (and doubled the fsync
+  // cycle) without changing any other field.
   return result;
 }
