@@ -43,9 +43,17 @@ export interface HermesAdapterOptions {
    * stream is always appended to hermes.raw.log on disk regardless.
    */
   maxRetainedOutputChars?: number;
+  /**
+   * Cap on the task events retained in memory per session. A long-lived
+   * session accumulates every task.output line of every execution it ever
+   * ran; the oldest events are trimmed past this cap. Each execution's full
+   * event history is always appended to its events.jsonl on disk regardless.
+   */
+  maxRetainedSessionEvents?: number;
 }
 
 const DEFAULT_MAX_RETAINED_OUTPUT_CHARS = 8 * 1024 * 1024;
+const DEFAULT_MAX_RETAINED_SESSION_EVENTS = 10_000;
 
 interface ActiveExecution {
   request: HermesTaskRequest;
@@ -74,6 +82,10 @@ interface StoredSession {
   env: NodeJS.ProcessEnv;
   profile: string | null;
   events: HermesTaskEvent[];
+  /** Count of events trimmed from the front of `events` by the retention cap. */
+  eventsTrimmed: number;
+  /** Executions that already emitted a terminal event (survives trimming). */
+  terminalExecutionIds: Set<string>;
   waiters: Array<() => void>;
   active: ActiveExecution | null;
   lastResult: HermesTaskResult | null;
@@ -98,6 +110,7 @@ export class HermesAdapter {
   private readonly ptyCols: number;
   private readonly ptyRows: number;
   private readonly maxRetainedOutputChars: number;
+  private readonly maxRetainedSessionEvents: number;
 
   constructor(options: HermesAdapterOptions = {}) {
     this.command = options.command ?? detectHermesBinaryPath(process.env) ?? process.env.HERMES_COMMAND ?? "hermes";
@@ -109,6 +122,7 @@ export class HermesAdapter {
     this.ptyCols = options.ptyCols ?? 120;
     this.ptyRows = options.ptyRows ?? 30;
     this.maxRetainedOutputChars = options.maxRetainedOutputChars ?? DEFAULT_MAX_RETAINED_OUTPUT_CHARS;
+    this.maxRetainedSessionEvents = options.maxRetainedSessionEvents ?? DEFAULT_MAX_RETAINED_SESSION_EVENTS;
   }
 
   async start_session(workdir: string, options: StartHermesSessionOptions = {}): Promise<HermesAdapterSession> {
@@ -132,6 +146,8 @@ export class HermesAdapter {
       env: { ...process.env, ...(options.env ?? {}) },
       profile: options.profile ?? null,
       events: [],
+      eventsTrimmed: 0,
+      terminalExecutionIds: new Set(),
       waiters: [],
       active: null,
       lastResult: null,
@@ -343,11 +359,20 @@ export class HermesAdapter {
 
   async *read_events(sessionId: string, executionId?: string): AsyncGenerator<HermesTaskEvent> {
     const session = this.requireSession(sessionId);
-    let cursor = 0;
+    // Absolute event index: the retention cap trims the oldest entries out
+    // of session.events, so buffer positions shift under a paused reader.
+    let cursor = session.eventsTrimmed;
     let sawExecution = false;
     while (true) {
-      while (cursor < session.events.length) {
-        const event = session.events[cursor++];
+      while (true) {
+        // Retention overtook this reader (it parked across more than a
+        // cap's worth of pushes); the trimmed events are gone, so resume
+        // at the oldest retained one.
+        if (cursor < session.eventsTrimmed) cursor = session.eventsTrimmed;
+        const index = cursor - session.eventsTrimmed;
+        if (index >= session.events.length) break;
+        const event = session.events[index];
+        cursor += 1;
         if (executionId && event.execution_id !== executionId) continue;
         sawExecution = true;
         yield event;
@@ -357,6 +382,11 @@ export class HermesAdapter {
         ? findLastEventForExecution(session.events, executionId)
         : session.events[session.events.length - 1];
       if (sawExecution && !session.active && isTerminalEventType(lastEvent?.type)) return;
+      // The retention cap can trim a finished execution's events out of the
+      // retained window entirely; terminalExecutionIds remembers executions
+      // whose terminal event was already pushed so a late reader returns
+      // instead of parking on a waiter that never fires for it again.
+      if (executionId && session.terminalExecutionIds.has(executionId)) return;
       // A closed session will never emit again; without this check a pending
       // iterator would park on a waiter that nothing ever wakes.
       if (session.closed) return;
@@ -633,6 +663,17 @@ export class HermesAdapter {
   private async pushEvent(session: StoredSession, event: HermesTaskEvent): Promise<void> {
     const parsed = HermesTaskEventSchema.parse(event);
     session.events.push(parsed);
+    if (isTerminalEventType(parsed.type)) session.terminalExecutionIds.add(parsed.execution_id);
+    const excess = session.events.length - this.maxRetainedSessionEvents;
+    if (excess > 0) {
+      // A long-lived session retains every task.output line of every
+      // execution it ever ran; without this cap the array grows without
+      // bound, the same way rawOutput and partialLine did before their
+      // caps. Trim the oldest events; each execution's full history is
+      // still on disk in its events.jsonl.
+      session.events.splice(0, excess);
+      session.eventsTrimmed += excess;
+    }
     const active = session.active;
     if (active) await appendFile(active.eventLogPath, JSON.stringify(parsed) + "\n", "utf8");
     const waiters = session.waiters.splice(0, session.waiters.length);
