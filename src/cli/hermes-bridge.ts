@@ -64,13 +64,20 @@ export async function runHermesBridgeCli(argv: string[] = process.argv.slice(2))
     state_root: server.stateRoot,
   }, null, 2));
 
-  const shutdown = async () => {
-    await server.stop();
-    process.exit(0);
+  const shutdown = () => {
+    // A failed stop must still exit (non-zero) instead of escaping the
+    // signal handler as an unhandledRejection mid-shutdown.
+    server.stop().then(
+      () => process.exit(0),
+      (error) => {
+        console.error(error);
+        process.exit(1);
+      },
+    );
   };
 
-  process.on("SIGINT", () => { void shutdown(); });
-  process.on("SIGTERM", () => { void shutdown(); });
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
 
 export const __testables = { parseArgs };
