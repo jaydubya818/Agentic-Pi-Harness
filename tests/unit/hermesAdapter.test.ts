@@ -251,6 +251,60 @@ describe("HermesAdapter", () => {
     expect(rawLog.length).toBeGreaterThan(100000);
   }, 15000);
 
+  it("caps in-memory session event retention while the on-disk log keeps the full history", async () => {
+    const workdir = await makeTempDir("pi-hermes-work-");
+    const outputDirA = await makeTempDir("pi-hermes-out-");
+    const outputDirB = await makeTempDir("pi-hermes-out-");
+    const adapter = await createAdapter({ maxRetainedSessionEvents: 50 });
+    const session = await adapter.start_session(workdir);
+
+    const makeRequest = (requestId: string, outputDir: string) => HermesTaskRequestSchema.parse({
+      request_id: requestId,
+      session_id: session.session_id,
+      objective: "__NOISY__ flood stdout, then emit the structured result.",
+      workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["read", "write"],
+      timeout_seconds: 30,
+      output_dir: outputDir,
+      metadata: { mission_id: "mission-retention", run_id: "run-retention", step_id: "step-retention" },
+    });
+
+    const firstAccepted = await adapter.send_task(session.session_id, makeRequest("req_retention_1", outputDirA));
+    await adapter.collect_result(session.session_id);
+
+    // The retained in-memory window is capped, but the on-disk event log
+    // still carries the execution's full history.
+    const retained: string[] = [];
+    for await (const event of adapter.read_events(session.session_id, firstAccepted.execution_id)) {
+      retained.push(event.type);
+    }
+    expect(retained.length).toBeGreaterThan(0);
+    expect(retained.length).toBeLessThanOrEqual(50);
+    expect(retained[retained.length - 1]).toBe("task.completed");
+    const eventLog = await readFile(join(outputDirA, ".pi-hermes", "events.jsonl"), "utf8");
+    expect(eventLog.split("\n").filter(Boolean).length).toBeGreaterThan(1000);
+
+    // A second noisy execution trims the first one's events out of the
+    // retained window entirely; a late reader for the first execution must
+    // still terminate instead of parking forever on a waiter.
+    await adapter.send_task(session.session_id, makeRequest("req_retention_2", outputDirB));
+    await adapter.collect_result(session.session_id);
+
+    const lateRead = (async () => {
+      let count = 0;
+      for await (const _event of adapter.read_events(session.session_id, firstAccepted.execution_id)) {
+        count += 1;
+      }
+      return count;
+    })();
+    const outcome = await Promise.race([
+      lateRead.then(() => "done"),
+      new Promise((resolvePromise) => setTimeout(() => resolvePromise("hung"), 2000)),
+    ]);
+    expect(outcome).toBe("done");
+  }, 20000);
+
   it("caps the buffered partial line when a worker streams a giant newline-free line", async () => {
     const workdir = await makeTempDir("pi-hermes-work-");
     const outputDir = await makeTempDir("pi-hermes-out-");
