@@ -267,6 +267,37 @@ describe("runHermesDoctor", () => {
     expect(cancelled).toBe(1);
   });
 
+  it("aborts a hung healthz probe instead of parking the doctor on it", async () => {
+    // A bridge that accepts the connection but never answers: the probe
+    // must abort on requestTimeoutMs and settle as a failing check, not
+    // park on undici's ~300s default response timeout.
+    const { createServer } = await import("node:http");
+    const hungResponses: import("node:http").ServerResponse[] = [];
+    const server = createServer((_req, res) => {
+      hungResponses.push(res);
+    });
+    await new Promise<void>((resolvePromise) => server.listen(0, "127.0.0.1", resolvePromise));
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+
+    const startedAt = Date.now();
+    try {
+      const checks = await runHermesDoctor({
+        url: `http://127.0.0.1:${port}`,
+        token: "doctor-secret",
+        timeoutMs: 1_000,
+        requestTimeoutMs: 250,
+      });
+      const health = checks.find((check) => check.name === "bridge healthz reachable");
+      expect(health?.ok).toBe(false);
+      expect(health?.detail).toContain("unreachable");
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+    } finally {
+      for (const res of hungResponses) res.destroy();
+      await new Promise<void>((resolvePromise) => server.close(() => resolvePromise()));
+    }
+  }, 10_000);
+
   it("reports an unreachable bridge as a failing check instead of crashing", async () => {
     const fetchMock = vi.fn(async () => {
       throw new TypeError("fetch failed: connect ECONNREFUSED 127.0.0.1:8787");

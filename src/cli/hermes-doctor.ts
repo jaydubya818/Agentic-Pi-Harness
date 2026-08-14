@@ -20,6 +20,12 @@ export interface HermesDoctorOptions {
   pollIntervalMs?: number;
   /** How long to wait for the deadline-expiry cancel to settle the smoke run. */
   cancelSettleMs?: number;
+  /**
+   * Per-request abort timeout for every bridge probe. A bridge that accepts
+   * the connection but never answers otherwise parks a probe on undici's
+   * ~300s default; a doctor's diagnosis should fail fast instead.
+   */
+  requestTimeoutMs?: number;
   knowledgeRoots?: Partial<KnowledgeRoots>;
 }
 
@@ -105,6 +111,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
   const workdir = options.workdir ?? detected.repoPath ?? process.cwd();
   const pollIntervalMs = options.pollIntervalMs ?? 500;
   const cancelSettleMs = options.cancelSettleMs ?? 5000;
+  const requestTimeoutMs = options.requestTimeoutMs ?? 10000;
 
   checks.push({
     name: "detected Hermes binary path",
@@ -128,7 +135,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
   let healthOk = false;
   let healthDetail: string;
   try {
-    const healthResponse = await fetch(`${url}/healthz`);
+    const healthResponse = await fetch(`${url}/healthz`, { signal: AbortSignal.timeout(requestTimeoutMs) });
     const healthJson = await healthResponse.json().catch(() => ({})) as { ok?: boolean };
     healthOk = healthResponse.ok && Boolean(healthJson.ok);
     healthDetail = `${healthResponse.status}`;
@@ -142,7 +149,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
   });
   if (!healthOk) return checks;
 
-  const unauthorizedMeta = await fetch(`${url}/meta`);
+  const unauthorizedMeta = await fetch(`${url}/meta`, { signal: AbortSignal.timeout(requestTimeoutMs) });
   checks.push({
     name: "bridge auth enforced",
     ok: unauthorizedMeta.status === 401,
@@ -152,7 +159,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
   if (!token) return checks;
 
   const authHeaders = { Authorization: `Bearer ${token}` };
-  const metaResponse = await fetch(`${url}/meta`, { headers: authHeaders });
+  const metaResponse = await fetch(`${url}/meta`, { headers: authHeaders, signal: AbortSignal.timeout(requestTimeoutMs) });
   const meta = await metaResponse.json() as HermesMetaResponse;
   checks.push({
     name: "authorized meta works",
@@ -186,6 +193,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
         "content-type": "application/json",
       },
       body: JSON.stringify({ workdir }),
+      signal: AbortSignal.timeout(requestTimeoutMs),
     });
     const session = await sessionResponse.json() as HermesSessionResponse;
     sessionId = session.session_id ?? null;
@@ -216,6 +224,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
           step_id: "doctor-step",
         },
       }),
+      signal: AbortSignal.timeout(requestTimeoutMs),
     });
     const accepted = await executeResponse.json() as HermesAcceptedResponse;
     checks.push({
@@ -228,7 +237,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
     let run: HermesRunResponse | null = null;
     while (Date.now() < deadline) {
       try {
-        const runResponse = await fetch(`${url}/runs/${accepted.execution_id}`, { headers: authHeaders });
+        const runResponse = await fetch(`${url}/runs/${accepted.execution_id}`, { headers: authHeaders, signal: AbortSignal.timeout(requestTimeoutMs) });
         run = await runResponse.json() as HermesRunResponse;
         if (TERMINAL_RUN_STATUSES.includes(run.status)) break;
       } catch {
@@ -250,6 +259,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
           method: "POST",
           headers: { ...authHeaders, "content-type": "application/json" },
           body: JSON.stringify({ execution_id: accepted.execution_id }),
+          signal: AbortSignal.timeout(requestTimeoutMs),
         });
       } catch {
         // cancel is cleanup; the failing check below is authoritative
@@ -261,7 +271,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
       const settleDeadline = Date.now() + cancelSettleMs;
       while (Date.now() < settleDeadline) {
         try {
-          const runResponse = await fetch(`${url}/runs/${accepted.execution_id}`, { headers: authHeaders });
+          const runResponse = await fetch(`${url}/runs/${accepted.execution_id}`, { headers: authHeaders, signal: AbortSignal.timeout(requestTimeoutMs) });
           const latest = await runResponse.json() as HermesRunResponse;
           if (runResponse.ok && TERMINAL_RUN_STATUSES.includes(latest.status)) {
             run = latest;
@@ -280,7 +290,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
       detail: run?.status ?? "timeout",
     });
 
-    const eventsResponse = await fetch(`${url}/runs/${accepted.execution_id}/events`, { headers: authHeaders });
+    const eventsResponse = await fetch(`${url}/runs/${accepted.execution_id}/events`, { headers: authHeaders, signal: AbortSignal.timeout(requestTimeoutMs) });
     const events = await eventsResponse.json() as HermesEventsResponse;
     const transportEvent = events.items.find((event) => event.type === "task.progress" && event.data?.transport);
     checks.push({
@@ -300,7 +310,7 @@ export async function runHermesDoctor(options: HermesDoctorOptions = {}): Promis
     // unreachable bridge) must not mask the checks already collected.
     if (sessionId) {
       try {
-        await fetch(`${url}/sessions/${sessionId}/close`, { method: "POST", headers: authHeaders });
+        await fetch(`${url}/sessions/${sessionId}/close`, { method: "POST", headers: authHeaders, signal: AbortSignal.timeout(requestTimeoutMs) });
       } catch {
         // ignore — session close is cleanup, not part of the diagnosis
       }
