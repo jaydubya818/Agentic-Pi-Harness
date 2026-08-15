@@ -91,10 +91,10 @@ RUN_SCRIPT_CONTENT=$(cat <<EOF
 set -euo pipefail
 
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-export PI_HERMES_BRIDGE_TOKEN="\$(/bin/cat $TOKEN_FILE)"
+export PI_HERMES_BRIDGE_TOKEN="\$(/bin/cat "$TOKEN_FILE")"
 
-cd $REPO_ROOT
-exec npm run hermes:bridge -- --host $BRIDGE_HOST --port $BRIDGE_PORT --state-root $STATE_ROOT
+cd "$REPO_ROOT"
+exec npm run hermes:bridge -- --host "$BRIDGE_HOST" --port "$BRIDGE_PORT" --state-root "$STATE_ROOT"
 EOF
 )
 
@@ -161,6 +161,10 @@ fi
 mkdir -p "$PI_HOME" "$STATE_ROOT" "$LAUNCH_AGENTS_DIR"
 umask 077
 printf '%s\n' "$TOKEN" > "$TOKEN_FILE"
+# umask only constrains newly created files: re-running against a token file
+# that already exists with looser permissions would leave the bridge bearer
+# token world-readable.
+chmod 600 "$TOKEN_FILE"
 printf '%s\n' "$RUN_SCRIPT_CONTENT" > "$RUN_SCRIPT"
 chmod 700 "$RUN_SCRIPT"
 printf '%s\n' "$PLIST_CONTENT" > "$PLIST_PATH"
