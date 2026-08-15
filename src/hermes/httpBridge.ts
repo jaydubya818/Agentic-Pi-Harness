@@ -261,6 +261,22 @@ export class HermesBridgeServer {
       return;
     }
 
+    if (method === "GET" && path === "/sessions") {
+      // POST /sessions creates them and POST /sessions/:id/close releases
+      // them, but there was no way to see what a long-lived bridge is
+      // holding: an operator chasing a leaked idle session (or a 409 from
+      // close) had to read the state root off disk. Mirrors GET /runs,
+      // including ?limit=N to tail the most recent.
+      const limit = parseLimitParam(url);
+      // Map insertion order is creation order (restored sessions first).
+      const items = Array.from(this.sessions.values());
+      json(res, 200, {
+        count: items.length,
+        items: limit === null ? items : items.slice(-limit),
+      });
+      return;
+    }
+
     if (method === "POST" && path === "/sessions") {
       const body = await readJson<StartSessionBody>(req);
       if (typeof body.workdir !== "string" || body.workdir.length === 0) {

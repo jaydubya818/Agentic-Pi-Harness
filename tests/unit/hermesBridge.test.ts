@@ -378,6 +378,68 @@ describe("HermesBridgeServer", () => {
     }
   }, 15000);
 
+  it("lists open sessions on GET /sessions with tail limiting", async () => {
+    const workdirA = await makeTempDir("pi-hermes-bridge-sessions-a-");
+    const workdirB = await makeTempDir("pi-hermes-bridge-sessions-b-");
+    const stateRoot = await makeTempDir("pi-hermes-bridge-sessions-state-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+
+    try {
+      expect(await (await fetch(`${base}/sessions`)).json()).toEqual({ count: 0, items: [] });
+
+      const open = async (workdir: string) => {
+        const response = await fetch(`${base}/sessions`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ workdir }),
+        });
+        expect(response.status).toBe(200);
+        return (await response.json() as { session_id: string }).session_id;
+      };
+
+      const first = await open(workdirA);
+      const second = await open(workdirB);
+
+      const listResponse = await fetch(`${base}/sessions`);
+      expect(listResponse.status).toBe(200);
+      const list = await listResponse.json() as { count: number; items: Array<{ session_id: string; status: string }> };
+      expect(list.count).toBe(2);
+      expect(list.items.map((item) => item.session_id)).toEqual([first, second]);
+      expect(list.items.every((item) => item.status === "idle")).toBe(true);
+
+      const tail = await (await fetch(`${base}/sessions?limit=1`)).json() as { count: number; items: Array<{ session_id: string }> };
+      expect(tail.count).toBe(2);
+      expect(tail.items.map((item) => item.session_id)).toEqual([second]);
+
+      const badLimit = await fetch(`${base}/sessions?limit=0`);
+      expect(badLimit.status).toBe(400);
+
+      // A closed session leaves the listing, which is the whole point of
+      // being able to see what the bridge is still holding.
+      const closeResponse = await fetch(`${base}/sessions/${first}/close`, { method: "POST" });
+      expect(closeResponse.status).toBe(200);
+      const afterClose = await (await fetch(`${base}/sessions`)).json() as { count: number; items: Array<{ session_id: string }> };
+      expect(afterClose.items.map((item) => item.session_id)).toEqual([second]);
+    } finally {
+      await server.stop();
+    }
+  }, 15000);
+
   it("lists run summaries on GET /runs with tail limiting", async () => {
     const workdir = await makeTempDir("pi-hermes-bridge-list-work-");
     const outputDirA = await makeTempDir("pi-hermes-bridge-list-out-a-");
