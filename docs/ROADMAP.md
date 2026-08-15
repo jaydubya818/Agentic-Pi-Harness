@@ -37,6 +37,31 @@ Not committed to a release. Open to reshuffling.
 - Rich compaction strategies: semantic summarization, token-aware
 - Tier C decision-log semantic equivalence beyond the basic hash
 
+## Parked with a known design constraint
+
+### MCP hosting (Tier C, ADR 0001 / ADR 0004)
+
+Not scheduled, and nothing in `src/` speaks MCP today. Recorded here so the
+design is not started against a stale reading of the protocol: the
+`2026-07-28` MCP specification revision changes the shape an MCP host would
+have to implement.
+
+- The core protocol is **stateless**: the `initialize`/`initialized`
+  handshake and the `Mcp-Session-Id` header are gone. A host built around a
+  per-connection session handle would be modelling something the protocol no
+  longer has.
+- Routing moved to **request headers**, and list results are **cacheable**.
+- **Dynamic Client Registration is deprecated** in favour of CIMD.
+- **Tasks** moved out of core into the `io.modelcontextprotocol/tasks`
+  extension.
+- **Roots, Sampling, and Logging are deprecated** on a 12-month window.
+
+Implication for this repo when the surface is picked up: the bridge's
+session-oriented control plane (`POST /sessions` → `execute` → close) is a
+Pi-Hermes contract, not an MCP one, and must not be reused as the MCP
+transport model. Verify against the spec revision current at the time —
+this note is a pointer, not a substitute.
+
 ## Rejected
 
 Documented decisions that are not happening. Each references the ADR that
