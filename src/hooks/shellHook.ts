@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { HookContext, HookResponse, HookResponseSchema, InProcessHook } from "./dispatcher.js";
 import { PiHarnessError } from "../errors.js";
 
@@ -64,17 +65,26 @@ function spawnShellHook(spec: ShellHookSpec, ctx: HookContext, cwd: string): Pro
     let stderr = "";
     let stdoutOverflow = false;
     let killed = false;
+    // A pipe read can split a multi-byte UTF-8 character across two 'data'
+    // events; a per-chunk toString() turns each half into U+FFFD, which
+    // corrupts any non-ASCII hook reason/patch and can make the response
+    // fail JSON.parse outright. A per-stream StringDecoder carries the
+    // partial bytes over to the next chunk (same fix as hermes/transport).
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
     const kill = setTimeout(() => {
       killed = true;
       killHookTree(child);
     }, hardTimeout);
     child.stdout.on("data", (d) => {
+      const text = decodeChunk(stdoutDecoder, d);
       if (stdout.length >= MAX_CAPTURE_CHARS) { stdoutOverflow = true; return; }
-      stdout += d.toString("utf8");
+      stdout += text;
     });
     child.stderr.on("data", (d) => {
+      const text = decodeChunk(stderrDecoder, d);
       if (stderr.length >= MAX_CAPTURE_CHARS) return;
-      stderr += d.toString("utf8");
+      stderr += text;
     });
     child.on("error", (err) => {
       clearTimeout(kill);
@@ -113,6 +123,11 @@ function spawnShellHook(spec: ShellHookSpec, ctx: HookContext, cwd: string): Pro
     }));
     child.stdin.end();
   });
+}
+
+/** Decode a stdio chunk, carrying any partial multi-byte character over. */
+function decodeChunk(decoder: StringDecoder, chunk: Buffer | string): string {
+  return typeof chunk === "string" ? chunk : decoder.write(chunk);
 }
 
 /**

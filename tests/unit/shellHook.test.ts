@@ -36,6 +36,29 @@ process.stdin.on('end', () => {
     expect(res.reason).toBe("blocked");
   });
 
+  it("reassembles a multi-byte character split across stdout chunks", async () => {
+    // Write the reason one raw byte at a time so every multi-byte UTF-8
+    // character lands split across 'data' events. Per-chunk toString() turns
+    // each half into U+FFFD and the JSON body stops round-tripping.
+    const script = `
+const body = Buffer.from(JSON.stringify({ outcome: 'deny', reason: 'refus\u00e9 \u2014 \u65e5\u672c\u8a9e \ud83d\ude80' }), 'utf8');
+let i = 0;
+const tick = () => {
+  if (i >= body.length) { process.stdout.end(); return; }
+  process.stdout.write(body.subarray(i, i + 1));
+  i += 1;
+  setImmediate(tick);
+};
+tick();`;
+    const res = await runShellHook(
+      { command: ["node", "-e", script], hardTimeoutMs: 10_000 },
+      ctx,
+    );
+    expect(res.outcome).toBe("deny");
+    expect(res.reason).toBe("refus\u00e9 \u2014 \u65e5\u672c\u8a9e \ud83d\ude80");
+    expect(res.reason).not.toContain("\uFFFD");
+  });
+
   it("survives a hook that exits without reading its stdin payload", async () => {
     // A large payload overflows the pipe buffer, so the write finishes after
     // the child has already exited and stdin raises EPIPE. Without an error
