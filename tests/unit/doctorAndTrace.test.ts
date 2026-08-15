@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { doctor } from "../../src/cli/doctor.js";
@@ -38,5 +38,21 @@ describe("doctor and trace polish", () => {
     expect(lines[0].event.type).toBe("message_start");
     expect(lines.some((line) => line.event.type === "tool_use" && line.event.name === "read_file")).toBe(true);
     expect(lines.some((line) => line.event.type === "tool_result" && line.event.id === "t2")).toBe(true);
+  });
+
+  it("recreates a trace directory that disappeared after it was first ensured", async () => {
+    // appendJsonl memoizes the directories it has already created, so a
+    // trace root removed between runs (test teardown, an operator clearing
+    // an out root) must not make every later append fail with ENOENT.
+    const dir = await mkdtemp(join(tmpdir(), "pi-trace-"));
+    const traceDir = join(dir, "traces");
+    const tracePath = join(traceDir, "trace.jsonl");
+
+    await runGoldenPath(join(dir, "work1"), join(dir, "out1"), { tracePath });
+    await rm(traceDir, { recursive: true, force: true });
+    await runGoldenPath(join(dir, "work2"), join(dir, "out2"), { tracePath });
+
+    const lines = (await readFile(tracePath, "utf8")).split("\n").filter(Boolean);
+    expect(lines.length).toBeGreaterThan(0);
   });
 });
