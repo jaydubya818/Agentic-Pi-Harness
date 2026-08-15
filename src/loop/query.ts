@@ -100,9 +100,36 @@ function isMutatingTool(toolName: string): boolean {
   return toolName === "write_file";
 }
 
+/**
+ * Trace directories already created in this process. appendJsonl runs once
+ * per emitted event, and the recursive mkdir it used to issue every time was
+ * a pure syscall tax after the first line of a session: the directory is the
+ * same for the whole run. Bounded so a long-lived supervisor process that
+ * runs many sessions cannot accumulate paths forever.
+ */
+const ensuredJsonlDirs = new Set<string>();
+const MAX_ENSURED_JSONL_DIRS = 1024;
+
+async function ensureJsonlDir(dir: string): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  if (ensuredJsonlDirs.size >= MAX_ENSURED_JSONL_DIRS) ensuredJsonlDirs.clear();
+  ensuredJsonlDirs.add(dir);
+}
+
 async function appendJsonl(path: string, value: unknown): Promise<void> {
-  await mkdir(dirname(path), { recursive: true });
-  await appendFile(path, JSON.stringify(value) + "\n", "utf8");
+  const dir = dirname(path);
+  const line = JSON.stringify(value) + "\n";
+  if (!ensuredJsonlDirs.has(dir)) await ensureJsonlDir(dir);
+  try {
+    await appendFile(path, line, "utf8");
+  } catch (error) {
+    // The trace directory can disappear underneath a cached entry (a test
+    // tmpdir teardown, an operator clearing an out root mid-run). Re-create
+    // it and retry once instead of failing the whole turn.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    await ensureJsonlDir(dir);
+    await appendFile(path, line, "utf8");
+  }
 }
 
 async function emitEvent(
