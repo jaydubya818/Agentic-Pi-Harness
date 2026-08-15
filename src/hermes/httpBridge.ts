@@ -256,15 +256,8 @@ export class HermesBridgeServer {
       // The denial log is append-only and unbounded on a long-lived bridge;
       // ?limit=N lets operators tail the most recent records instead of
       // shipping the whole history on every poll.
-      const limitRaw = url.searchParams.get("limit");
-      if (limitRaw === null) {
-        json(res, 200, denials);
-        return;
-      }
-      if (!/^\d+$/.test(limitRaw) || Number(limitRaw) < 1) {
-        throw new BridgeRequestError(400, `limit must be a positive integer, got ${JSON.stringify(limitRaw)}`);
-      }
-      json(res, 200, denials.slice(-Number(limitRaw)));
+      const limit = parseLimitParam(url);
+      json(res, 200, limit === null ? denials : denials.slice(-limit));
       return;
     }
 
@@ -428,14 +421,7 @@ export class HermesBridgeServer {
       // ids had to come from out-of-band records or the state root on
       // disk. Summaries only (no events or envelopes) keep the payload
       // small on a long-lived bridge; ?limit=N tails the most recent.
-      const limitRaw = url.searchParams.get("limit");
-      let limit: number | null = null;
-      if (limitRaw !== null) {
-        if (!/^\d+$/.test(limitRaw) || Number(limitRaw) < 1) {
-          throw new BridgeRequestError(400, `limit must be a positive integer, got ${JSON.stringify(limitRaw)}`);
-        }
-        limit = Number(limitRaw);
-      }
+      const limit = parseLimitParam(url);
       // Map insertion order is acceptance order (restored runs first).
       const items = Array.from(this.runs.values()).map((run) => serializeRunSummary(run));
       json(res, 200, {
@@ -1334,6 +1320,19 @@ function statusFromLegacyEvent(type: string): HermesTaskResult["status"] | null 
     default:
       return null;
   }
+}
+
+/**
+ * Shared `?limit=N` tail parameter for the list endpoints. Returns null when
+ * the caller did not ask for a limit (send everything).
+ */
+function parseLimitParam(url: URL): number | null {
+  const raw = url.searchParams.get("limit");
+  if (raw === null) return null;
+  if (!/^\d+$/.test(raw) || Number(raw) < 1) {
+    throw new BridgeRequestError(400, `limit must be a positive integer, got ${JSON.stringify(raw)}`);
+  }
+  return Number(raw);
 }
 
 function parseLastEventId(req: IncomingMessage): number {
