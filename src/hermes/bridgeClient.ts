@@ -52,6 +52,16 @@ const pollSettings = {
    * deadline it exists to enforce.
    */
   requestTimeoutMs: 10_000,
+  /**
+   * Abort timeout for the two setup requests (POST /sessions, POST /execute).
+   * Both answer as soon as the bridge has recorded the session / spawned the
+   * worker, but they ran with no signal at all: a bridge that accepted the
+   * connection and never answered parked them on undici's ~300s default
+   * before the deadline loop below had even started. Kept looser than
+   * requestTimeoutMs because a cold worker spawn is legitimately slower than
+   * a status poll.
+   */
+  setupRequestTimeoutMs: 30_000,
 };
 
 export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<BridgeGovernedRun> {
@@ -103,6 +113,7 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
       method: "POST",
       headers: { ...authHeaders, "content-type": "application/json" },
       body: JSON.stringify({ workdir, env: input.env, profile: input.profile }),
+      signal: AbortSignal.timeout(pollSettings.setupRequestTimeoutMs),
     });
     if (!sessionResponse.ok) {
       throw new Error(`bridge session create failed: HTTP ${sessionResponse.status} ${await sessionResponse.text()}`);
@@ -132,6 +143,7 @@ export async function runTaskViaBridge(input: BridgeExecuteTaskInput): Promise<B
       method: "POST",
       headers: { ...authHeaders, "content-type": "application/json" },
       body: JSON.stringify(request),
+      signal: AbortSignal.timeout(pollSettings.setupRequestTimeoutMs),
     });
     // Read as text first: a non-JSON error body (auth rejection, proxy HTML
     // page) must surface the HTTP status, not an opaque JSON parse error.
