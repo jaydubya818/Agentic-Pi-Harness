@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { detectHermesBinaryPath } from "../../src/hermes/discovery.js";
+import { detectHermesBinaryPath, detectHermesRepoPath } from "../../src/hermes/discovery.js";
 
 const createdPaths: string[] = [];
 
@@ -34,5 +34,21 @@ describe("hermes discovery", () => {
     // Falls through to the ~/.local/bin/hermes default probe; the explicit
     // directory must not win.
     expect(detectHermesBinaryPath({ HERMES_COMMAND: dirNamedHermes })).not.toBe(resolve(dirNamedHermes));
+  });
+
+  it("resolves an explicit readable repo directory", async () => {
+    const base = await makeTempDir("pi-discovery-");
+    const repo = join(base, "hermes-agent");
+    await mkdir(repo);
+
+    expect(detectHermesRepoPath({ HERMES_REPO_PATH: repo })).toBe(resolve(repo));
+  });
+
+  it("does not report a regular file as the worker repo (R_OK passes on files)", async () => {
+    const base = await makeTempDir("pi-discovery-");
+    const fileNamedRepo = join(base, "hermes-agent");
+    await writeFile(fileNamedRepo, "not a repo\n", "utf8");
+
+    expect(detectHermesRepoPath({ HERMES_REPO_PATH: fileNamedRepo })).not.toBe(resolve(fileNamedRepo));
   });
 });
