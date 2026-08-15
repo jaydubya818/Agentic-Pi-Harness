@@ -252,6 +252,39 @@ describe("bridge client run polling", () => {
     }
   }, 15000);
 
+  it("aborts a hung session-create request instead of stalling on the undici default", async () => {
+    // POST /sessions and POST /execute ran with no abort signal at all, so a
+    // bridge that accepts the connection and never answers parked the whole
+    // governed run on undici's ~300s header timeout before polling started.
+    const hungResponses: import("node:http").ServerResponse[] = [];
+    const server = createServer((_req, res) => {
+      hungResponses.push(res);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const outRoot = await mkdtemp(join(tmpdir(), "pi-bridge-poll-"));
+    createdPaths.push(outRoot);
+
+    const settings = __bridgeClientTestables.pollSettings;
+    const previous = { ...settings };
+    settings.setupRequestTimeoutMs = 250;
+    const startedAt = Date.now();
+    try {
+      await expect(runTaskViaBridge({
+        objective: "hung bridge session create",
+        workdir: outRoot,
+        outRoot,
+        timeoutSeconds: 600,
+        bridgeUrl: `http://127.0.0.1:${port}`,
+      })).rejects.toThrow();
+      expect(Date.now() - startedAt).toBeLessThan(5000);
+    } finally {
+      Object.assign(settings, previous);
+      for (const res of hungResponses) res.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }, 15000);
+
   it("aborts a hung poll request instead of stalling past the run deadline", async () => {
     // The bridge accepts /runs connections and never answers: without a
     // per-request abort timeout each poll parks on undici's ~300s default
