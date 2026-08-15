@@ -44,7 +44,11 @@ function isExecutable(path: string): boolean {
 function isDirectoryReadable(path: string): boolean {
   try {
     accessSync(path, fsConstants.R_OK);
-    return true;
+    // R_OK passes for regular files too, so a *file* named
+    // "hermes-agent" (or a HERMES_REPO_PATH pointing at one) was reported
+    // as the worker repo root. Every consumer treats repoPath as a
+    // directory, so only directories count.
+    return statSync(path).isDirectory();
   } catch {
     return false;
   }
