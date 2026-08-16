@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readdir, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { safeWriteJson } from "../session/provenance.js";
 import {
@@ -136,10 +136,18 @@ export class HermesBridgeStateStore {
     await appendFile(this.preflightDenialsPath(), JSON.stringify(record) + "\n", "utf8");
   }
 
-  async loadPreflightDenials(): Promise<BridgePreflightDenialRecord[]> {
+  /**
+   * The denial log is append-only and unbounded on a long-lived bridge, so
+   * the whole-file read behind every `GET /preflight-denials?limit=N` grew
+   * without bound even though the caller only wanted the tail. With a limit,
+   * read backwards from the end until enough lines are in hand.
+   */
+  async loadPreflightDenials(limit?: number): Promise<BridgePreflightDenialRecord[]> {
     let raw: string;
     try {
-      raw = await readFile(this.preflightDenialsPath(), "utf8");
+      raw = limit === undefined
+        ? await readFile(this.preflightDenialsPath(), "utf8")
+        : await readTailLines(this.preflightDenialsPath(), limit);
     } catch {
       return [];
     }
@@ -233,6 +241,40 @@ export class HermesBridgeStateStore {
 
   private preflightDenialsPath(): string {
     return join(this.root, "preflight-denials.jsonl");
+  }
+}
+
+
+/** Starting window for a tail read, grown until it holds enough lines. */
+const TAIL_CHUNK_BYTES = 64 * 1024;
+/** Hard stop so a log with enormous single records cannot pull it all in. */
+const MAX_TAIL_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Read enough of the end of a JSONL file to contain at least `minLines`
+ * complete lines. Any partial line at the front of the window is dropped, so
+ * a chunk boundary can never produce a torn record (or a split multi-byte
+ * character, which always lands inside that discarded prefix).
+ */
+async function readTailLines(path: string, minLines: number): Promise<string> {
+  const handle = await open(path, "r");
+  try {
+    const { size } = await handle.stat();
+    if (size === 0) return "";
+    let window = Math.min(size, TAIL_CHUNK_BYTES);
+    for (;;) {
+      const buffer = Buffer.alloc(window);
+      await handle.read(buffer, 0, window, size - window);
+      const atStart = window >= size;
+      const text = buffer.toString("utf8");
+      const firstNewline = text.indexOf("\n");
+      const complete = atStart ? text : (firstNewline === -1 ? "" : text.slice(firstNewline + 1));
+      const lineCount = complete.split("\n").filter(Boolean).length;
+      if (atStart || lineCount >= minLines || window >= MAX_TAIL_BYTES) return complete;
+      window = Math.min(size, Math.max(window * 4, TAIL_CHUNK_BYTES));
+    }
+  } finally {
+    await handle.close();
   }
 }
 
