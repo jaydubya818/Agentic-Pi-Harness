@@ -408,6 +408,37 @@ describe("HermesAdapter", () => {
     },
   );
 
+  it("bounds artifact discovery by depth and count", async () => {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const outputDir = await makeTempDir("pi-hermes-artifact-bounds-");
+
+    // Deeper than the depth bound under test: files past it are not reported.
+    let deep = outputDir;
+    for (let level = 0; level < 5; level++) {
+      deep = join(deep, `level-${level}`);
+      await mkdir(deep);
+      await writeFile(join(deep, "note.txt"), "x\n", "utf8");
+    }
+    // Wider than the count bound under test.
+    for (let index = 0; index < 6; index++) {
+      await writeFile(join(outputDir, `a-${index}.txt`), "x\n", "utf8");
+    }
+
+    const depthBounded = await __adapterTestables.detectArtifacts(outputDir, { maxDepth: 2, maxArtifacts: 1000 });
+    expect(depthBounded.some((artifact) => artifact.path.includes("level-4"))).toBe(false);
+    expect(depthBounded.some((artifact) => artifact.path.includes("level-1"))).toBe(true);
+
+    const countBounded = await __adapterTestables.detectArtifacts(outputDir, { maxDepth: 24, maxArtifacts: 3 });
+    expect(countBounded).toHaveLength(3);
+
+    // The shipped defaults are generous enough that ordinary runs are
+    // unaffected by either bound.
+    expect(__adapterTestables.DEFAULT_ARTIFACT_SCAN_LIMITS.maxDepth).toBeGreaterThanOrEqual(16);
+    expect(__adapterTestables.DEFAULT_ARTIFACT_SCAN_LIMITS.maxArtifacts).toBeGreaterThanOrEqual(1000);
+    const unbounded = await __adapterTestables.detectArtifacts(outputDir);
+    expect(unbounded).toHaveLength(11);
+  });
+
   it("settles watchers and the completion promise when spawn setup fails", async () => {
     const workdir = await makeTempDir("pi-hermes-work-");
     const outputDir = await makeTempDir("pi-hermes-out-");
