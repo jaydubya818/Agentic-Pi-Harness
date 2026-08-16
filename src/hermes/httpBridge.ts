@@ -143,6 +143,18 @@ export class HermesBridgeServer {
       });
     });
 
+    // Node's defaults let a slow or wedged client hold a connection open for
+    // 60s of header silence and 300s of body dribble. The bridge is a
+    // long-lived loopback service on constrained hardware where every held
+    // socket is a real cost, and every legitimate request here is a small
+    // JSON body (readJson caps it at 4 MiB) from a local caller. Bound the
+    // receive side so a stuck client cannot park a connection. Response
+    // duration is not covered by requestTimeout, so long-lived SSE event
+    // streams are unaffected.
+    this.server.headersTimeout = 15_000;
+    this.server.requestTimeout = 30_000;
+    this.server.keepAliveTimeout = 5_000;
+
     await new Promise<void>((resolvePromise) => {
       this.server!.listen(this.port, this.host, () => resolvePromise());
     });
