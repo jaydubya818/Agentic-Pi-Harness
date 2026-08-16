@@ -1,15 +1,26 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { EffectRecord, EffectRecordSchema, parseOrThrow } from "../schemas/index.js";
 import { PiHarnessError } from "../errors.js";
 
+/**
+ * Hashed by streaming rather than readFile: pre/post hashing runs on every
+ * path a mutating tool touches, and buffering the whole file just to hash it
+ * put the largest touched file fully in RAM twice per tool call. On a Pi that
+ * is the difference between a bounded working set and an OOM kill on a big
+ * build artifact or dataset the agent happened to write.
+ */
 async function hashFile(path: string): Promise<string | null> {
   try {
     const s = await stat(path);
     if (!s.isFile()) return null;
-    const buf = await readFile(path);
-    return "sha256:" + createHash("sha256").update(buf).digest("hex");
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(path)) {
+      hash.update(chunk as Buffer);
+    }
+    return "sha256:" + hash.digest("hex");
   } catch {
     return null;
   }
