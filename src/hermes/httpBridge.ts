@@ -264,11 +264,12 @@ export class HermesBridgeServer {
     }
 
     if (method === "GET" && path === "/preflight-denials") {
-      const denials = await this.stateStore.loadPreflightDenials();
       // The denial log is append-only and unbounded on a long-lived bridge;
       // ?limit=N lets operators tail the most recent records instead of
-      // shipping the whole history on every poll.
+      // shipping the whole history on every poll. The limit is pushed down
+      // into the store so a tail request also stops *reading* the whole log.
       const limit = parseLimitParam(url);
+      const denials = await this.stateStore.loadPreflightDenials(limit ?? undefined);
       json(res, 200, limit === null ? denials : denials.slice(-limit));
       return;
     }

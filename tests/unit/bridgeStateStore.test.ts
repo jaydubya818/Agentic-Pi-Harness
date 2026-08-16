@@ -47,6 +47,49 @@ describe("HermesBridgeStateStore", () => {
     expect(denials.map((denial) => denial.code)).toEqual(["one", "two"]);
   });
 
+  it("tails the denial log without reading records older than the requested limit", async () => {
+    const root = await makeTempDir("pi-bridge-state-denial-tail-");
+    const store = new HermesBridgeStateStore(root);
+    await store.init();
+    // Well past the 64 KiB starting tail window so the read genuinely has to
+    // seek rather than swallowing the file whole.
+    const total = 2000;
+    for (let index = 0; index < total; index++) {
+      await store.appendPreflightDenial({
+        at: "2026-08-16T00:00:00Z",
+        code: `denial-${index}`,
+        message: "x".repeat(200),
+      });
+    }
+
+    const tail = await store.loadPreflightDenials(3);
+    // The tail window holds more than three lines; the caller slices. What
+    // matters is that the newest records are present and every returned
+    // record parsed cleanly (no torn line at the window boundary).
+    expect(tail.length).toBeGreaterThanOrEqual(3);
+    expect(tail.length).toBeLessThan(total);
+    expect(tail.slice(-3).map((denial) => denial.code)).toEqual([
+      `denial-${total - 3}`,
+      `denial-${total - 2}`,
+      `denial-${total - 1}`,
+    ]);
+    for (const denial of tail) expect(denial.message).toHaveLength(200);
+
+    // No limit still returns the complete history.
+    const all = await store.loadPreflightDenials();
+    expect(all).toHaveLength(total);
+    expect(all[0].code).toBe("denial-0");
+  });
+
+  it("tails a denial log smaller than one read window", async () => {
+    const root = await makeTempDir("pi-bridge-state-denial-small-");
+    const store = new HermesBridgeStateStore(root);
+    await store.init();
+    expect(await store.loadPreflightDenials(5)).toEqual([]);
+    await store.appendPreflightDenial({ at: "2026-08-16T00:00:00Z", code: "only", message: "m" });
+    expect((await store.loadPreflightDenials(5)).map((denial) => denial.code)).toEqual(["only"]);
+  });
+
   it("skips a torn trailing run-event line instead of dropping the whole event log", async () => {
     const root = await makeTempDir("pi-bridge-state-events-");
     const store = new HermesBridgeStateStore(root);
