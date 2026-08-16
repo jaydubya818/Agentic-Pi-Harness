@@ -80,13 +80,39 @@ export function buildExecutionPlan<T>(calls: ClassifiedCall<T>[]): ExecutionGrou
   return groups;
 }
 
+/**
+ * How many readonly tool calls may be in flight at once. The size of a
+ * readonly group is model-controlled: a turn that emits fifty parallel reads
+ * used to open fifty file handles / sockets in the same tick. On the Pi-class
+ * hardware this harness targets that is the difference between a bounded
+ * working set and EMFILE. Ordering and result collation are unaffected --
+ * calls still start in plan order and results are still sorted by it.
+ */
+export const MAX_READONLY_FANOUT = 8;
+
+async function runWithFanoutLimit<T>(calls: ClassifiedCall<T>[], limit: number): Promise<PromiseSettledResult<T>[]> {
+  const settled = new Array<PromiseSettledResult<T>>(calls.length);
+  let nextIndex = 0;
+  const runners = Array.from({ length: Math.min(limit, calls.length) }, async () => {
+    for (let index = nextIndex++; index < calls.length; index = nextIndex++) {
+      try {
+        settled[index] = { status: "fulfilled", value: await calls[index].run() };
+      } catch (reason) {
+        settled[index] = { status: "rejected", reason };
+      }
+    }
+  });
+  await Promise.all(runners);
+  return settled;
+}
+
 export async function scheduleCalls<T>(calls: ScheduledCall<T>[], classifier: ConcurrencyClassifier): Promise<ScheduledResult<T>[]> {
   const results: ScheduledResult<T>[] = [];
   const plan = buildExecutionPlan(classifyToolCalls(calls, classifier));
 
   for (const group of plan) {
     if (group.class === "readonly") {
-      const settled = await Promise.allSettled(group.calls.map((call) => call.run()));
+      const settled = await runWithFanoutLimit(group.calls, MAX_READONLY_FANOUT);
       for (let index = 0; index < group.calls.length; index++) {
         results.push({ call: group.calls[index], result: settled[index] });
       }
