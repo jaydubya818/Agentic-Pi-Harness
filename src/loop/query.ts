@@ -162,6 +162,22 @@ function modelIterator(model: ModelClient): AsyncIterator<StreamEvent> {
   return factory.call(stream);
 }
 
+/**
+ * Release a model stream that is being abandoned mid-flight (a retry that
+ * re-opens the stream, or a fatal pull failure). Without the `return()` call
+ * the provider-side generator never runs its `finally` block, so the socket
+ * / SSE connection behind it stays open for the rest of the process — a real
+ * descriptor leak on a long-lived supervisor that retries.
+ */
+async function closeModelIterator(iterator: AsyncIterator<StreamEvent>): Promise<void> {
+  try {
+    await iterator.return?.();
+  } catch {
+    // Abandoning the stream is best-effort cleanup; the caller is already
+    // retrying or throwing the authoritative failure.
+  }
+}
+
 function wrapModelInvocationFailure(error: unknown, input: {
   classification: string;
   attempt: number;
@@ -559,12 +575,14 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
         if (shouldRetryModelInvocation({ retry: inp.retry, attempt, classification })) {
           counters.inc("retry.attempted");
           retried = true;
+          await closeModelIterator(iterator);
           await sleep(computeRetryDelayMs(attempt, inp.retry!.baseDelayMs, inp.retry!.maxDelayMs));
           attempt += 1;
           break;
         }
 
         counters.inc(retryFailureCounterKey({ retry: inp.retry, attempt, classification }));
+        await closeModelIterator(iterator);
         throw wrapModelInvocationFailure(error, {
           classification,
           attempt,
