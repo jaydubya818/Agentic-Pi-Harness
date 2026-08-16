@@ -90,7 +90,20 @@ export function verifyTapeRecords(records: TapeRecord[]): VerifyResult {
   let lastDigest = prevHash;
 
   for (let i = 0; i < records.length; i++) {
-    const result = verifyRecordChain(records[i], prevHash, i + 1);
+    const record = records[i];
+    // The hash chain proves each record follows the one before it, but it is
+    // recomputable by anyone: it cannot by itself distinguish one session
+    // from two concatenated (and re-chained) ones, nor a tape whose events
+    // were re-numbered. Assert the structural invariants the writer
+    // guarantees so those rewrites surface as verification failures instead
+    // of a clean "ok".
+    if (i > 0 && record.type === "header") {
+      return { ok: false, records: i, error: `line ${i + 1}: unexpected header record mid-tape` };
+    }
+    if (record.type === "event" && record.seq !== i) {
+      return { ok: false, records: i, error: `line ${i + 1}: expected seq ${i}, found ${record.seq}` };
+    }
+    const result = verifyRecordChain(record, prevHash, i + 1);
     if (!result.ok) {
       return { ok: false, records: i, error: result.error };
     }
