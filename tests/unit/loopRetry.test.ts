@@ -96,6 +96,47 @@ class MidStreamFailOnceModel implements ModelClient {
   }
 }
 
+/**
+ * Counts `return()` calls on the async iterator so the loop can be held to
+ * releasing an abandoned model stream (the provider-side generator's
+ * `finally` block is what closes the underlying connection).
+ */
+class ClosableFailBeforeFirstEventModel implements ModelClient {
+  name = "closable-fail-before-first-event";
+  invocationCount = 0;
+  returnCount = 0;
+
+  constructor(private readonly script: StreamEvent[], private readonly failInvocations: number, private readonly code: string) {}
+
+  stream(): AsyncIterable<StreamEvent> {
+    this.invocationCount += 1;
+    const invocation = this.invocationCount;
+    const countReturn = () => { this.returnCount += 1; };
+    let index = 0;
+    const script = this.script;
+    const failInvocations = this.failInvocations;
+    const code = this.code;
+
+    return {
+      [Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
+        return {
+          async next() {
+            if (invocation <= failInvocations) {
+              throw transientError(code);
+            }
+            if (index >= script.length) return { done: true, value: undefined as never };
+            return { done: false, value: script[index++] };
+          },
+          async return() {
+            countReturn();
+            return { done: true, value: undefined as never };
+          },
+        };
+      },
+    };
+  }
+}
+
 function writeToolScript(target: string): StreamEvent[] {
   return [
     { type: "message_start", schemaVersion: 1 },
@@ -293,5 +334,52 @@ describe("query loop retry", () => {
     expect(result.approvalDecisions).toEqual([]);
     expect(result.events.at(-2)).toMatchObject({ type: "tool_result", isError: true });
     await expect(readEffectLog(join(dir, "effects.jsonl"))).rejects.toMatchObject({ code: "E_SCHEMA_PARSE" });
+  });
+  it("closes the abandoned model stream before retrying and before failing closed", async () => {
+    const retryDir = await mkdtemp(join(tmpdir(), "pi-retry-close-"));
+    const retryTape = new ReplayRecorder(join(retryDir, "tape.jsonl"));
+    await retryTape.writeHeader({ sessionId: "s", loopGitSha: "g", policyDigest: "sha256:0", costTableVersion: "v1" });
+    const retryModel = new ClosableFailBeforeFirstEventModel([
+      { type: "message_start", schemaVersion: 1 },
+      { type: "message_stop", schemaVersion: 1, stopReason: "end_turn" },
+    ], 1, "ETIMEDOUT");
+
+    await runQueryLoop({
+      sessionId: "s",
+      model: retryModel,
+      tape: retryTape,
+      effects: new EffectRecorder(),
+      checkpointPath: join(retryDir, "checkpoint.json"),
+      effectLogPath: join(retryDir, "effects.jsonl"),
+      policyLogPath: join(retryDir, "policy.jsonl"),
+      tools: {},
+      retry: { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 5 },
+    });
+
+    expect(retryModel.invocationCount).toBe(2);
+    // The first (failed) stream is released; the second one runs to
+    // completion and is closed by the provider itself.
+    expect(retryModel.returnCount).toBe(1);
+
+    const failDir = await mkdtemp(join(tmpdir(), "pi-retry-close-fail-"));
+    const failTape = new ReplayRecorder(join(failDir, "tape.jsonl"));
+    await failTape.writeHeader({ sessionId: "s", loopGitSha: "g", policyDigest: "sha256:0", costTableVersion: "v1" });
+    const failModel = new ClosableFailBeforeFirstEventModel([], 5, "ETIMEDOUT");
+
+    await expect(runQueryLoop({
+      sessionId: "s",
+      model: failModel,
+      tape: failTape,
+      effects: new EffectRecorder(),
+      checkpointPath: join(failDir, "checkpoint.json"),
+      effectLogPath: join(failDir, "effects.jsonl"),
+      policyLogPath: join(failDir, "policy.jsonl"),
+      tools: {},
+      retry: { maxAttempts: 2, baseDelayMs: 1, maxDelayMs: 5 },
+    })).rejects.toMatchObject({ code: "E_MODEL_ADAPTER" });
+
+    expect(failModel.invocationCount).toBe(2);
+    // One release per abandoned stream: the retried one and the fatal one.
+    expect(failModel.returnCount).toBe(2);
   });
 });
