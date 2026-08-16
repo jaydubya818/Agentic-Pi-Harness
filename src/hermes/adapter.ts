@@ -762,10 +762,32 @@ function parseStructuredWorkerResult(responseText: string): { parsed: z.infer<ty
   }
 }
 
-async function detectArtifacts(outputDir: string): Promise<z.infer<typeof HermesArtifactSchema>[]> {
+export interface ArtifactScanLimits {
+  maxDepth: number;
+  maxArtifacts: number;
+}
+
+/**
+ * The output dir is written by the worker, which docs/THREAT-MODEL.md treats
+ * as untrusted. Every file found here becomes an artifact record that is
+ * hashed, persisted into the result envelope, and shipped over HTTP, so an
+ * unbounded scan turns a worker that dumps a node_modules tree (or nests
+ * directories in a loop) into an unbounded finalization cost on a Pi. Bound
+ * both dimensions; the raw files stay on disk either way.
+ */
+const DEFAULT_ARTIFACT_SCAN_LIMITS: ArtifactScanLimits = {
+  maxDepth: 24,
+  maxArtifacts: 5000,
+};
+
+async function detectArtifacts(
+  outputDir: string,
+  limits: ArtifactScanLimits = DEFAULT_ARTIFACT_SCAN_LIMITS,
+): Promise<z.infer<typeof HermesArtifactSchema>[]> {
   const artifacts: z.infer<typeof HermesArtifactSchema>[] = [];
 
-  async function walk(dir: string): Promise<void> {
+  async function walk(dir: string, depth: number): Promise<void> {
+    if (depth > limits.maxDepth) return;
     let entries;
     try {
       entries = await readdir(dir, { withFileTypes: true });
@@ -774,11 +796,15 @@ async function detectArtifacts(outputDir: string): Promise<z.infer<typeof Hermes
       // not discard the artifacts already collected from readable ones.
       return;
     }
+    // Deterministic traversal so the truncated set is stable across runs
+    // rather than whatever order the filesystem happened to return.
+    entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
+      if (artifacts.length >= limits.maxArtifacts) return;
       if (entry.name === ".pi-hermes") continue;
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
-        await walk(fullPath);
+        await walk(fullPath, depth + 1);
       } else if (entry.isFile()) {
         artifacts.push(HermesArtifactSchema.parse({
           type: inferArtifactType(entry.name),
@@ -788,12 +814,12 @@ async function detectArtifacts(outputDir: string): Promise<z.infer<typeof Hermes
     }
   }
 
-  await walk(outputDir);
+  await walk(outputDir, 0);
 
   return artifacts.sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export const __adapterTestables = { detectArtifacts, stripAnsi };
+export const __adapterTestables = { detectArtifacts, stripAnsi, DEFAULT_ARTIFACT_SCAN_LIMITS };
 
 function inferArtifactType(fileName: string): string {
   if (fileName.endsWith(".patch") || fileName.endsWith(".diff")) return "patch";
