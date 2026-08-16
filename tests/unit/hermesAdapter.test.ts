@@ -461,4 +461,17 @@ describe("HermesAdapter", () => {
       process.off("unhandledRejection", onUnhandled);
     }
   });
+
+  it("strips terminal erase characters without touching lines that have none", () => {
+    const { stripAnsi } = __adapterTestables;
+
+    const plain = "2026-01-01T00:00:00Z INFO worker line";
+    expect(stripAnsi(plain)).toBe(plain);
+    expect(stripAnsi("abc\b\bZ")).toBe("aZ");
+    expect(stripAnsi("ab\u007fc")).toBe("ac");
+    // Erasing past the start of the buffer must not underflow.
+    expect(stripAnsi("\b\b\bx")).toBe("x");
+    // ANSI escapes are still removed alongside the erase handling.
+    expect(stripAnsi("\u001B[32mok\u001B[0m")).toBe("ok");
+  });
 });
