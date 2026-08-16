@@ -3,6 +3,7 @@ import {
   buildExecutionPlan,
   classifyToolCall,
   ConcurrencyClassifier,
+  MAX_READONLY_FANOUT,
   scheduleCalls,
   ScheduledCall,
 } from "../../src/tools/concurrency.js";
@@ -170,5 +171,47 @@ describe("tool scheduling helpers", () => {
     expect(exclusiveSawOther).toBe(false);
     expect(log).toEqual(["r1", "w1", "w2", "b1", "r2"]);
     expect(results.map((result) => result.call.id)).toEqual(["r1", "w1", "w2", "b1", "r2"]);
+  });
+  it("caps how many readonly calls are in flight at once without dropping or reordering any", async () => {
+    const classifier = new ConcurrencyClassifier([{ name: "read_file", class: "readonly" }]);
+
+    let active = 0;
+    let maxActive = 0;
+    const total = MAX_READONLY_FANOUT * 3;
+    const calls: ScheduledCall<number>[] = Array.from({ length: total }, (_unused, index) => ({
+      id: `r${index}`,
+      name: "read_file",
+      order: index,
+      run: async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active -= 1;
+        return index;
+      },
+    }));
+
+    const results = await scheduleCalls(calls, classifier);
+
+    expect(maxActive).toBeLessThanOrEqual(MAX_READONLY_FANOUT);
+    expect(maxActive).toBe(MAX_READONLY_FANOUT);
+    expect(results).toHaveLength(total);
+    expect(results.map((entry) => entry.call.id)).toEqual(calls.map((call) => call.id));
+    expect(results.map((entry) => entry.result.status === "fulfilled" ? entry.result.value : null))
+      .toEqual(calls.map((_unused, index) => index));
+  });
+
+  it("keeps a rejected readonly call from taking down the rest of its group", async () => {
+    const classifier = new ConcurrencyClassifier([{ name: "read_file", class: "readonly" }]);
+    const calls: ScheduledCall<string>[] = [
+      { id: "r0", name: "read_file", order: 0, run: async () => "ok-0" },
+      { id: "r1", name: "read_file", order: 1, run: async () => { throw new Error("boom"); } },
+      { id: "r2", name: "read_file", order: 2, run: async () => "ok-2" },
+    ];
+
+    const results = await scheduleCalls(calls, classifier);
+
+    expect(results.map((entry) => entry.result.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
+    expect(results[1].result.status === "rejected" && String(results[1].result.reason)).toContain("boom");
   });
 });
