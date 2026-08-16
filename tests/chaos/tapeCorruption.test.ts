@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ReplayRecorder } from "../../src/replay/recorder.js";
 import { verifyTape } from "../../src/cli/verify.js";
+import { sha256HexFramed } from "../../src/schemas/canonical.js";
 
 async function freshTape() {
   const dir = await mkdtemp(join(tmpdir(), "pi-chaos-"));
@@ -44,7 +45,31 @@ describe("chaos: tape corruption is always detected", () => {
     await writeFile(p, lines.join("\n") + "\n");
     const v = await verifyTape(p);
     expect(v.ok).toBe(false);
-    expect(v.error).toMatch(/prevHash mismatch/);
+    // Out-of-order seq is caught before the chain walk gets to the hash;
+    // either signal is a valid detection of the same corruption.
+    expect(v.error).toMatch(/prevHash mismatch|expected seq/);
+  });
+
+  it("detects a second header record spliced into a fully re-chained tape", async () => {
+    const p = await freshTape();
+    const records = (await readFile(p, "utf8")).split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    // Two sessions concatenated. The hash chain is recomputable by anyone,
+    // so re-chaining every record afterwards makes the splice invisible to
+    // the chain walk; only the structural check catches it.
+    const spliced = [records[0], records[1], { ...records[0] }, ...records.slice(2)];
+    let prevHash = "0".repeat(64);
+    const rechained = spliced.map((record) => {
+      const { recordHash: _drop, ...rest } = record;
+      const base = { ...rest, prevHash };
+      const next = { ...base, recordHash: "sha256:" + sha256HexFramed("pi-tape-v1", base) };
+      prevHash = next.recordHash;
+      return next;
+    });
+    await writeFile(p, rechained.map((record) => JSON.stringify(record)).join("\n") + "\n");
+
+    const v = await verifyTape(p);
+    expect(v.ok).toBe(false);
+    expect(v.error).toMatch(/unexpected header record mid-tape/);
   });
 
   it("detects injected bogus record at tail", async () => {
