@@ -52,6 +52,25 @@ describe("effect recorder", () => {
     expect(record.unifiedDiff.length).toBeLessThan(500);
   });
 
+  it("does not retain the text of files past the diff text budget", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-effect-oversized-"));
+    const file = join(dir, "huge.txt");
+    // One byte past the 8 MiB budget: readText must refuse to hold it.
+    await writeFile(file, Buffer.alloc(8 * 1024 * 1024 + 1, 0x61));
+
+    const recorder = new EffectRecorder();
+    await recorder.snapshotPre([file], "tool-oversized");
+    await writeFile(file, Buffer.alloc(8 * 1024 * 1024 + 1, 0x62));
+    const record = await recorder.capturePost("session-1", "tool-oversized", "write_file", [file]);
+
+    expect(record.preHashes[file]).toMatch(/^sha256:/);
+    expect(record.postHashes[file]).not.toBe(record.preHashes[file]);
+    // A large *text* file is not a binary change; it is an omitted diff.
+    expect(record.binaryChanged).toBe(false);
+    expect(record.unifiedDiff).toContain("diff text budget");
+    expect(record.unifiedDiff.length).toBeLessThan(500);
+  });
+
   it("discard releases a pre-snapshot scope so a failed tool call does not retain it", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-effect-discard-"));
     const file = join(dir, "f.txt");

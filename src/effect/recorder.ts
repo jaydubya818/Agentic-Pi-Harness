@@ -32,8 +32,24 @@ function isBinary(buf: Buffer): boolean {
   return false;
 }
 
-async function readText(path: string): Promise<string | null> {
+/**
+ * Upper bound on the file text retained for diffing. `snapshotPre` holds the
+ * pre-image of every path a mutating tool touches for the life of the tool
+ * call, and `capturePost` reads the post-image alongside it, so an agent that
+ * rewrites one large file put two full copies of it on the heap. The LCS
+ * budget below already refuses to diff anything near this size, so reading
+ * the bytes at all was pure memory cost.
+ */
+const MAX_DIFF_TEXT_BYTES = 8 * 1024 * 1024;
+
+/** Sentinel for "readable text, but too large to hold for a diff". */
+const OVERSIZED = Symbol("oversized-for-diff");
+type SnapshotText = string | typeof OVERSIZED | null;
+
+async function readText(path: string): Promise<SnapshotText> {
   try {
+    const s = await stat(path);
+    if (s.isFile() && s.size > MAX_DIFF_TEXT_BYTES) return OVERSIZED;
     const b = await readFile(path);
     if (isBinary(b)) return null;
     return b.toString("utf8");
@@ -73,6 +89,11 @@ function unifiedDiff(a: string, b: string, path: string): string {
          body.join("\n") + "\n";
 }
 
+function oversizedDiffMarker(path: string): string {
+  return `--- a/${path}\n+++ b/${path}\n@@ @@\n` +
+         `[diff omitted: file exceeds the ${MAX_DIFF_TEXT_BYTES}-byte diff text budget]\n`;
+}
+
 type DiffOp = { kind: "eq" | "del" | "add"; line: string };
 function lcsDiff(a: string[], b: string[]): DiffOp[] {
   const n = a.length, m = b.length;
@@ -95,7 +116,7 @@ function lcsDiff(a: string[], b: string[]): DiffOp[] {
   return ops;
 }
 
-type PreEntry = { hash: string; text: string | null };
+type PreEntry = { hash: string; text: SnapshotText };
 
 function normalizePaths(paths: string[]): string[] {
   return [...new Set(paths)].sort((a, b) => a.localeCompare(b));
@@ -137,6 +158,13 @@ export class EffectScope {
       if (preEntry.hash === postHash) continue;
 
       const postText = await readText(p);
+      if (preEntry.text === OVERSIZED || postText === OVERSIZED) {
+        // The hashes above already record that the file changed; emit the
+        // same "diff omitted" marker the LCS budget uses rather than
+        // mislabelling a large text file as a binary change.
+        diffs.push(oversizedDiffMarker(p));
+        continue;
+      }
       if (preEntry.text == null || postText == null) {
         binaryChanged = true;
         continue;
