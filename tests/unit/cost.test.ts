@@ -10,10 +10,25 @@ const table: CostTable = {
 };
 
 describe("CostTracker", () => {
-  it("estimates tokens at 4 chars each (ceil, min 1)", () => {
-    expect(estimateTokens("")).toBe(1);
+  it("estimates tokens at 4 chars each (ceil, min 1 for non-empty)", () => {
+    // An empty chunk carries no content and must cost nothing: the provider
+    // normalizer turns every contentless housekeeping chunk into an empty
+    // text delta, so a floor of 1 here inflated every real run's output
+    // token count.
+    expect(estimateTokens("")).toBe(0);
+    expect(estimateTokens("a")).toBe(1);
     expect(estimateTokens("abcd")).toBe(1);
     expect(estimateTokens("abcde")).toBe(2);
+  });
+
+  it("does not charge tokens for the provider's contentless housekeeping chunks", () => {
+    const t = new CostTracker(table);
+    // normalize() maps content_block_stop / message_delta / ping to an empty
+    // text delta; a stream of them must not accumulate cost.
+    for (let i = 0; i < 50; i++) t.observe({ type: "text_delta", schemaVersion: 1, text: "" });
+    const snap = t.snapshot();
+    expect(snap.outputTokens).toBe(0);
+    expect(snap.usd).toBe(0);
   });
 
   it("accumulates text_delta as output tokens and tool_result as input", () => {
