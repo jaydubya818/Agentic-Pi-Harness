@@ -1,4 +1,4 @@
-import { isCliEntrypoint } from "./args.js";
+import { assertKnownFlag, isCliEntrypoint } from "./args.js";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -32,9 +32,22 @@ export async function parseRunCliArgs(args: string[]): Promise<ParsedRunCliArgs>
       tracePath = "__default__";
     } else if (arg.startsWith("--trace=")) {
       tracePath = arg.slice("--trace=".length);
+      // An empty value used to disable tracing silently: the loop only
+      // writes a trace when tracePath is truthy, so `--trace=` produced a
+      // run with no trace and no complaint.
+      if (tracePath === "") throw new Error("invalid --trace= value: expected a path");
     } else {
+      // Same terminal guard the hermes CLIs use (see cli/args.ts): anything
+      // still flag-shaped here is a typo. Left in the positional list it
+      // silently became the workdir, so `run --trcae=/x ./work ./out` ran
+      // the golden path against a directory named "--trcae=/x".
+      assertKnownFlag(arg, []);
       positional.push(arg);
     }
+  }
+
+  if (positional.length > 2) {
+    throw new Error(`unexpected argument: ${JSON.stringify(positional[2])} (usage: pi-harness run [workdir] [outRoot] [--trace|--trace=<path>])`);
   }
 
   let resolvedTrace = tracePath;
