@@ -423,7 +423,7 @@ export class HermesBridgeServer {
 
     const sessionCloseMatch = path.match(/^\/sessions\/([^/]+)\/close$/);
     if (method === "POST" && sessionCloseMatch) {
-      const sessionId = sessionCloseMatch[1];
+      const sessionId = decodePathSegment(sessionCloseMatch[1]);
       const session = this.sessions.get(sessionId);
       if (!session) {
         json(res, 404, { error: `unknown session_id: ${sessionId}` });
@@ -467,9 +467,10 @@ export class HermesBridgeServer {
 
     const runMatch = path.match(/^\/runs\/([^/]+)$/);
     if (method === "GET" && runMatch) {
-      const run = this.runs.get(runMatch[1]);
+      const runExecutionId = decodePathSegment(runMatch[1]);
+      const run = this.runs.get(runExecutionId);
       if (!run) {
-        json(res, 404, { error: `unknown execution_id: ${runMatch[1]}` });
+        json(res, 404, { error: `unknown execution_id: ${runExecutionId}` });
         return;
       }
       if (url.searchParams.get("view") === "raw") {
@@ -482,9 +483,10 @@ export class HermesBridgeServer {
 
     const eventsMatch = path.match(/^\/runs\/([^/]+)\/events$/);
     if (method === "GET" && eventsMatch) {
-      const run = this.runs.get(eventsMatch[1]);
+      const eventsExecutionId = decodePathSegment(eventsMatch[1]);
+      const run = this.runs.get(eventsExecutionId);
       if (!run) {
-        json(res, 404, { error: `unknown execution_id: ${eventsMatch[1]}` });
+        json(res, 404, { error: `unknown execution_id: ${eventsExecutionId}` });
         return;
       }
       if (url.searchParams.get("stream") === "1") {
@@ -501,9 +503,10 @@ export class HermesBridgeServer {
 
     const eventsStreamMatch = path.match(/^\/runs\/([^/]+)\/events\/stream$/);
     if (method === "GET" && eventsStreamMatch) {
-      const run = this.runs.get(eventsStreamMatch[1]);
+      const streamExecutionId = decodePathSegment(eventsStreamMatch[1]);
+      const run = this.runs.get(streamExecutionId);
       if (!run) {
-        json(res, 404, { error: `unknown execution_id: ${eventsStreamMatch[1]}` });
+        json(res, 404, { error: `unknown execution_id: ${streamExecutionId}` });
         return;
       }
       this.streamRunEvents(req, res, run);
@@ -1261,6 +1264,24 @@ export class HermesBridgeServer {
       this.deliverToSubscriber(executionId, subscriber, () => subscriber.close());
     }
     this.subscribers.delete(executionId);
+  }
+}
+
+/**
+ * URL.pathname keeps percent-encoding, but run/session ids are stored under
+ * their decoded spelling. assertSafeStateIdSegment only rejects path
+ * separators and NUL, so a caller-supplied v2 execution_id may legitimately
+ * contain a space, '#', '?' or '%' -- all of which a client must encode.
+ * Matching the raw segment made such a run unreachable over HTTP: /runs/:id,
+ * its events, and its SSE stream all answered 404 for a run the bridge was
+ * actively supervising. Decode, falling back to the raw segment when the
+ * value is not valid percent-encoding (decodeURIComponent throws on '%zz').
+ */
+function decodePathSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
   }
 }
 

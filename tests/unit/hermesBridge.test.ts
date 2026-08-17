@@ -293,6 +293,72 @@ describe("HermesBridgeServer", () => {
     }
   });
 
+  it("addresses runs whose execution id needs percent-encoding", async () => {
+    const workdir = await makeTempDir("pi-hermes-bridge-enc-work-");
+    const outputDir = await makeTempDir("pi-hermes-bridge-enc-out-");
+    const stateRoot = await makeTempDir("pi-hermes-bridge-enc-state-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+    try {
+      const session = await (await fetch(`${base}/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workdir }),
+      })).json() as { session_id: string };
+
+      // A space is not a path separator, so assertSafeStateIdSegment accepts
+      // it -- but a client must percent-encode it in the URL.
+      const executionId = "exec bridge encoded";
+      const executeResponse = await fetch(`${base}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          request_id: "req_bridge_encoded",
+          session_id: session.session_id,
+          execution_id: executionId,
+          objective: "Write a report to the output dir and summarize it.",
+          workdir,
+          allowed_tools: ["bash"],
+          allowed_actions: ["read", "write"],
+          timeout_seconds: 20,
+          output_dir: outputDir,
+          metadata: { mission_id: "m", run_id: "r", step_id: "s" },
+        }),
+      });
+      expect(executeResponse.status).toBe(202);
+
+      const encoded = encodeURIComponent(executionId);
+      const runResponse = await fetch(`${base}/runs/${encoded}`);
+      expect(runResponse.status).toBe(200);
+      expect((await runResponse.json() as { execution_id: string }).execution_id).toBe(executionId);
+
+      const eventsResponse = await fetch(`${base}/runs/${encoded}/events`);
+      expect(eventsResponse.status).toBe(200);
+      expect((await eventsResponse.json() as { execution_id: string }).execution_id).toBe(executionId);
+
+      // A genuinely unknown id still 404s, and malformed percent-encoding
+      // must not throw a 500 out of the router.
+      expect((await fetch(`${base}/runs/nope`)).status).toBe(404);
+      expect((await fetch(`${base}/runs/%zz`)).status).toBe(404);
+    } finally {
+      await server.stop();
+    }
+  }, 30000);
+
   it("starts sessions and executes Hermes runs over HTTP", async () => {
     const workdir = await makeTempDir("pi-hermes-bridge-work-");
     const outputDir = await makeTempDir("pi-hermes-bridge-out-");
