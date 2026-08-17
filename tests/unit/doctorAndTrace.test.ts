@@ -23,6 +23,17 @@ describe("doctor and trace polish", () => {
     expect(parsed.tracePath).toContain(".pi/traces/latest.jsonl");
   });
 
+  it("parseRunCliArgs rejects typo'd flags instead of using them as the workdir", async () => {
+    await expect(parseRunCliArgs(["--trcae=/tmp/x", "./work", "./out"])).rejects.toThrow(/unknown flag/);
+    // A known flag spelled without its value is still a mistake.
+    await expect(parseRunCliArgs(["--trace=", "./work"])).rejects.toThrow(/invalid --trace= value/);
+    // Extra positionals are a mistake too (the CLI only takes two).
+    await expect(parseRunCliArgs(["./work", "./out", "./extra"])).rejects.toThrow(/unexpected argument/);
+    // The supported spellings still parse.
+    const parsed = await parseRunCliArgs(["./work", "./out", "--trace=/tmp/t.jsonl"]);
+    expect(parsed).toEqual({ workdir: "./work", outRoot: "./out", tracePath: "/tmp/t.jsonl" });
+  });
+
   it("runGoldenPath writes a lightweight JSONL trace when requested", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-trace-"));
     const workdir = join(dir, "work");
