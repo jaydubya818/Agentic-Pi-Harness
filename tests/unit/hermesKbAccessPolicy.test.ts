@@ -584,6 +584,35 @@ describe("KB access policy V1", () => {
     await expect(access(join(outside, "victim.md"))).resolves.toBeUndefined();
   });
 
+  it("refuses to promote a candidate that is a symlink out of its zone", async () => {
+    const roots = await createRoots();
+    const outside = await makeTempDir("kb-promo-outside-");
+    const secret = join(outside, "id_rsa");
+    await writeFile(secret, "PRIVATE KEY MATERIAL\n");
+
+    // A worker-writable candidate path that is really a symlink to a file
+    // the harness user can read anywhere on the box.
+    const sourcePath = join(roots.llmWikiRoot, "drafts", "candidate.md");
+    await mkdir(join(roots.llmWikiRoot, "drafts"), { recursive: true });
+    await symlink(secret, sourcePath);
+
+    const targetPath = join(roots.agenticKbRoot, "knowledge", "promoted", "smuggled.md");
+    const approvalPath = join(roots.agenticKbRoot, "supervision", "approvals", "approve-smuggled.md");
+
+    await expect(promoteKnowledgeCandidate({
+      sourcePath,
+      targetPath,
+      approvalPath,
+      missionId: "mission-alpha",
+      runId: "run-1",
+      roots,
+    })).rejects.toThrow(/escapes its policy class/);
+
+    // Nothing canonical may have been minted from the symlink target.
+    await expect(access(targetPath)).rejects.toThrow();
+    await expect(access(approvalPath)).rejects.toThrow();
+  });
+
   it("allows a legitimate write when a benign symlink sits above the root", async () => {
     const wikiRoot = await makeTempDir("llm-wiki-benign-");
     const realKb = await makeTempDir("agentic-kb-real-");
