@@ -1,4 +1,4 @@
-import { appendFile, mkdir, open, readdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readdir, readFile, type FileHandle } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { safeWriteJson } from "../session/provenance.js";
 import {
@@ -256,6 +256,23 @@ const MAX_TAIL_BYTES = 4 * 1024 * 1024;
  * a chunk boundary can never produce a torn record (or a split multi-byte
  * character, which always lands inside that discarded prefix).
  */
+/**
+ * read() is allowed to return short even on a regular file. A single call
+ * that came up short left the rest of the window as its zero fill, which
+ * decodes into NUL padding glued onto the newest record: the tail's last
+ * line stops being valid JSON and the most recent denial silently vanishes
+ * from the response. Loop until the window is full or EOF is reached.
+ */
+async function readFully(handle: FileHandle, buffer: Buffer, position: number): Promise<number> {
+  let filled = 0;
+  while (filled < buffer.length) {
+    const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, position + filled);
+    if (bytesRead === 0) break;
+    filled += bytesRead;
+  }
+  return filled;
+}
+
 async function readTailLines(path: string, minLines: number): Promise<string> {
   const handle = await open(path, "r");
   try {
@@ -264,9 +281,9 @@ async function readTailLines(path: string, minLines: number): Promise<string> {
     let window = Math.min(size, TAIL_CHUNK_BYTES);
     for (;;) {
       const buffer = Buffer.alloc(window);
-      await handle.read(buffer, 0, window, size - window);
+      const filled = await readFully(handle, buffer, size - window);
       const atStart = window >= size;
-      const text = buffer.toString("utf8");
+      const text = buffer.toString("utf8", 0, filled);
       const firstNewline = text.indexOf("\n");
       const complete = atStart ? text : (firstNewline === -1 ? "" : text.slice(firstNewline + 1));
       const lineCount = complete.split("\n").filter(Boolean).length;
