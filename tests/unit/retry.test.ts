@@ -49,4 +49,27 @@ describe("retry helpers", () => {
       status: 503,
     });
   });
+
+  it("reads transport codes out of the fetch cause chain", () => {
+    // What undici actually throws: the outer error carries no code at all.
+    const fetchFailed = new TypeError("fetch failed", { cause: transientError("ECONNRESET") });
+    expect(normalizeRetryError(fetchFailed).code).toBe("ECONNRESET");
+    expect(classifyRetryableModelError(fetchFailed, { hasPersistedEvent: false })).toBe("model_open_transient");
+
+    // An SDK that re-wraps undici's error still classifies.
+    const wrapped = new Error("provider request failed", { cause: fetchFailed });
+    expect(classifyRetryableModelError(wrapped, { hasPersistedEvent: false })).toBe("model_open_transient");
+
+    // undici's own timeout spellings count as transient too.
+    expect(classifyRetryableModelError(
+      new TypeError("fetch failed", { cause: transientError("UND_ERR_HEADERS_TIMEOUT") }),
+      { hasPersistedEvent: false },
+    )).toBe("model_open_transient");
+
+    // A genuine non-transport failure still fails closed, and a cyclic
+    // cause chain must terminate rather than spin.
+    const cyclic = new Error("boom") as Error & { cause?: unknown };
+    cyclic.cause = cyclic;
+    expect(classifyRetryableModelError(cyclic, { hasPersistedEvent: false })).toBe("model_open_fail_closed");
+  });
 });
