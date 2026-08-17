@@ -394,6 +394,13 @@ export async function promoteKnowledgeCandidate(input: PromoteKnowledgeCandidate
     await emitPolicyEvent(input.onEvent, sourceInfo, { type: "kb.write_denied", actor: "pi", path: sourcePath, detail: error.message });
     throw error;
   }
+  // The candidate lives in a Hermes-writable zone, so its path is worker
+  // controlled, and readFile below follows symlinks. Without this check a
+  // symlink parked at an approved candidate path would have whatever it
+  // points at (any file the harness user can read) copied into canonical
+  // KB under `trust: canonical`. The target and approval writes are already
+  // covered by writeKnowledgeText; the source *read* was not.
+  await assertNoSymlinkEscape("pi", sourceInfo, undefined, input.onEvent);
   const targetInfo = classifyKnowledgePath(targetPath, roots);
   if (!PROMOTION_TARGET_CLASSES.includes(targetInfo.pathClass)) {
     const error = new Error(`promotion target is not a canonical Pi-only KB directory (${targetInfo.pathClass}): ${targetPath}`);
