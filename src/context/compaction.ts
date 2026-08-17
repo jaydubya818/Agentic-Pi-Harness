@@ -46,7 +46,13 @@ export function compactToolResultOutput(toolCallId: string, bytes: number): stri
 }
 
 export function compactHistory(events: StreamEvent[], opts: CompactOptions): { events: StreamEvent[]; record: CompactionRecord | null } {
-  if (!shouldCompactHistory(events, opts.targetBytes)) {
+  // One serialization for both the trigger check and the record's
+  // bytesBefore. shouldCompactHistory + historyByteLength each JSON.stringify
+  // the entire event history, and compaction runs precisely when that history
+  // is at its largest, so the second identical pass was pure cost on the
+  // biggest input the loop ever hands this function.
+  const bytesBefore = historyByteLength(events);
+  if (bytesBefore <= opts.targetBytes) {
     return { events, record: null };
   }
 
@@ -71,7 +77,7 @@ export function compactHistory(events: StreamEvent[], opts: CompactOptions): { e
       strategy: "compact_tool_result_bodies",
       trigger: "target_bytes_exceeded",
       targetBytes: opts.targetBytes,
-      bytesBefore: historyByteLength(events),
+      bytesBefore,
       bytesAfter: historyByteLength(compactedEvents),
       compactedToolCallIds: segments.map((segment) => segment.toolCallId),
       compactedEventIndexes: segments.map((segment) => segment.index),
