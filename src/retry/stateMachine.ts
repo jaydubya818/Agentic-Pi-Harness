@@ -24,21 +24,59 @@ export interface NormalizedRetryError {
   status: number | null;
 }
 
-const RETRYABLE_MODEL_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "EPIPE", "EAI_AGAIN", "ECONNREFUSED"]);
+const RETRYABLE_MODEL_CODES = new Set([
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EPIPE",
+  "EAI_AGAIN",
+  "ECONNREFUSED",
+  // undici's spellings of the same transport failures. Any fetch-based
+  // provider on Node 18+ reports connect/header timeouts and dropped
+  // sockets under these codes rather than the libuv ones above.
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
 const RETRYABLE_MODEL_STATUSES = new Set([429, 502, 503, 504]);
 const PERSISTENCE_CODES = new Set(["E_TAPE_HASH", "E_CHECKPOINT_WRITE", "E_EFFECT_PRE_HASH", "E_EFFECT_CAPTURE"]);
 
+/**
+ * How far to walk the `cause` chain looking for the real transport error.
+ * undici nests one level (`TypeError: fetch failed` -> the socket error);
+ * SDKs that re-wrap it add one or two more. Bounded so a self-referential
+ * or adversarially deep chain cannot spin here.
+ */
+const MAX_CAUSE_DEPTH = 4;
+
+/**
+ * Reads code/name/status off the error, falling back through its `cause`
+ * chain for any field the outermost error does not carry.
+ *
+ * This matters because every fetch-based provider on Node 18+ surfaces
+ * transport failures as `TypeError: fetch failed` with the actual
+ * ECONNRESET / ETIMEDOUT / UND_ERR_* error hung off `cause`. Reading only
+ * the top level saw `{ code: null, name: "TypeError", status: null }`, so
+ * the single most common transient failure in production classified as
+ * `model_open_fail_closed` and was never retried -- the retry state machine
+ * effectively only fired for hand-rolled providers that set `code` directly.
+ */
 export function normalizeRetryError(error: unknown): NormalizedRetryError {
-  if (!error || typeof error !== "object") {
-    return { code: null, name: null, status: null };
+  const normalized: NormalizedRetryError = { code: null, name: null, status: null };
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+
+  for (let depth = 0; depth <= MAX_CAUSE_DEPTH; depth++) {
+    if (!current || typeof current !== "object" || seen.has(current)) break;
+    seen.add(current);
+    const record = current as Record<string, unknown>;
+    if (normalized.code === null && typeof record.code === "string") normalized.code = record.code;
+    if (normalized.name === null && typeof record.name === "string") normalized.name = record.name;
+    if (normalized.status === null && typeof record.status === "number") normalized.status = record.status;
+    if (normalized.code !== null && normalized.name !== null && normalized.status !== null) break;
+    current = record.cause;
   }
 
-  const record = error as Record<string, unknown>;
-  return {
-    code: typeof record.code === "string" ? record.code : null,
-    name: typeof record.name === "string" ? record.name : null,
-    status: typeof record.status === "number" ? record.status : null,
-  };
+  return normalized;
 }
 
 export function classifyRetryableModelError(error: unknown, boundary: RetryBoundaryState): RetryClassification {
