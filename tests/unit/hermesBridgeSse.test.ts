@@ -99,6 +99,78 @@ describe("HermesBridgeServer SSE", () => {
     }
   }, 20000);
 
+  it("a broken SSE observer cannot fail the run it is watching", async () => {
+    const workdir = await makeTempDir("pi-hermes-sse-iso-work-");
+    const outputDir = await makeTempDir("pi-hermes-sse-iso-out-");
+    const stateRoot = await makeTempDir("pi-hermes-sse-iso-state-");
+
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapterOptions: {
+        command: process.execPath,
+        commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+        preferTransport: "subprocess",
+        stateRoot,
+      },
+    });
+
+    const listening = await server.start();
+    const base = `http://${listening.host}:${listening.port}`;
+    try {
+      const sessionResponse = await fetch(`${base}/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workdir }),
+      });
+      const session = await sessionResponse.json() as { session_id: string };
+      const executeResponse = await fetch(`${base}/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          request_id: "req_sse_isolation",
+          session_id: session.session_id,
+          objective: "Write a report to the output dir and summarize it.",
+          workdir,
+          allowed_tools: ["bash"],
+          allowed_actions: ["read", "write"],
+          timeout_seconds: 20,
+          output_dir: outputDir,
+          metadata: { mission_id: "m", run_id: "r", step_id: "s" },
+        }),
+      });
+      const accepted = await executeResponse.json() as { execution_id: string };
+
+      // Stand in for an observer whose socket died between the last 'close'
+      // event and this write: every delivery attempt throws.
+      const internals = server as unknown as {
+        subscribers: Map<string, Set<{ res: unknown; send(id: number, event: unknown): void; close(): void }>>;
+      };
+      const brokenSubscriber = {
+        res: {} as never,
+        send: () => { throw new Error("EPIPE: simulated dead SSE client"); },
+        close: () => { throw new Error("EPIPE: simulated dead SSE client"); },
+      };
+      internals.subscribers.set(accepted.execution_id, new Set([brokenSubscriber]));
+
+      let run: { status: string; error?: string | null } = { status: "" };
+      for (let i = 0; i < 100; i++) {
+        run = await (await fetch(`${base}/runs/${accepted.execution_id}`)).json() as typeof run;
+        if (run.status === "completed" || run.status === "failed") break;
+        await sleep(50);
+      }
+
+      expect(run.status).toBe("completed");
+      expect(run.error ?? null).toBeNull();
+      // The broken observer is dropped rather than retained and retried.
+      expect(internals.subscribers.has(accepted.execution_id)).toBe(false);
+    } finally {
+      await server.stop();
+    }
+  }, 30000);
+
   it("streams live tail after replay and supports Last-Event-ID reconnect", async () => {
     const workdir = await makeTempDir("pi-hermes-sse-live-work-");
     const outputDir = await makeTempDir("pi-hermes-sse-live-out-");
