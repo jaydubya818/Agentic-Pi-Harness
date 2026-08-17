@@ -195,8 +195,13 @@ export class HermesBridgeServer {
         // session may already be gone; watcher settlement below still holds
       }
     }
-    for (const subscriberSet of this.subscribers.values()) {
-      for (const subscriber of subscriberSet) subscriber.close();
+    for (const [executionId, subscriberSet] of this.subscribers) {
+      // Same isolation as closeSubscribers: a dead observer's socket must
+      // not make stop() reject, which the CLI shutdown handler turns into a
+      // non-zero exit mid-drain.
+      for (const subscriber of Array.from(subscriberSet)) {
+        this.deliverToSubscriber(executionId, subscriber, () => subscriber.close());
+      }
     }
     this.subscribers.clear();
     await new Promise<void>((resolvePromise, rejectPromise) => {
@@ -1210,6 +1215,31 @@ export class HermesBridgeServer {
     (req.socket as Socket).on?.("error", cleanup);
   }
 
+  /**
+   * Fan-out to SSE observers happens inside the run's own event pump
+   * (watchRun -> emitV2Event -> broadcastEvent), all under watchRun's try.
+   * A socket write that throws there -- a client whose connection died
+   * between the last 'close' event and this write -- therefore escaped into
+   * that catch and settled a healthy run as `execution_error`. A read-only
+   * observer must never be able to change the outcome of the execution it
+   * is watching, so isolate each subscriber and drop the broken one.
+   */
+  private deliverToSubscriber(executionId: string, subscriber: SseSubscriber, deliver: () => void): void {
+    try {
+      deliver();
+    } catch (error) {
+      this.logger.log("warn", "hermes.bridge.sse_subscriber_failed", {
+        executionId,
+        error: String(error),
+      });
+      const subscriberSet = this.subscribers.get(executionId);
+      if (subscriberSet) {
+        subscriberSet.delete(subscriber);
+        if (subscriberSet.size === 0) this.subscribers.delete(executionId);
+      }
+    }
+  }
+
   private broadcastEvent(run: HermesBridgeRunRecord, event: BridgeEventRecord): void {
     const subscriberSet = this.subscribers.get(run.accepted.execution_id);
     if (!subscriberSet || subscriberSet.size === 0) return;
@@ -1217,7 +1247,7 @@ export class HermesBridgeServer {
     // after being pushed, so their id is the current event count.
     const eventId = isStructuredV2Event(event) ? event.event_id : run.events.length;
     for (const subscriber of Array.from(subscriberSet)) {
-      subscriber.send(eventId, event);
+      this.deliverToSubscriber(run.accepted.execution_id, subscriber, () => subscriber.send(eventId, event));
     }
     if (isTerminalBridgeEvent(event)) this.closeSubscribers(run.accepted.execution_id);
   }
@@ -1225,7 +1255,11 @@ export class HermesBridgeServer {
   private closeSubscribers(executionId: string): void {
     const subscriberSet = this.subscribers.get(executionId);
     if (!subscriberSet) return;
-    for (const subscriber of subscriberSet) subscriber.close();
+    // Also runs from watchRun's finally, where a throw would replace the
+    // run's real outcome with the socket failure.
+    for (const subscriber of Array.from(subscriberSet)) {
+      this.deliverToSubscriber(executionId, subscriber, () => subscriber.close());
+    }
     this.subscribers.delete(executionId);
   }
 }
