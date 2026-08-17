@@ -20,8 +20,18 @@ export interface CostRecord {
   at: string;
 }
 
-/** Rough char->token estimate (4 chars per token is the industry heuristic). */
+/**
+ * Rough char->token estimate (4 chars per token is the industry heuristic).
+ * The min-1 floor exists so a short-but-real chunk still costs something; it
+ * must not apply to an *empty* chunk. piDevProvider.normalize() deliberately
+ * maps every contentless housekeeping chunk (content_block_stop,
+ * message_delta, ping) to `{ kind: "text", text: "" }`, so a floor of 1 there
+ * charged a phantom token for each of them -- several per content block on a
+ * real provider stream -- and systematically overstated output tokens in the
+ * cost record the harness persists as evidence.
+ */
 export function estimateTokens(text: string): number {
+  if (text.length === 0) return 0;
   return Math.max(1, Math.ceil(text.length / 4));
 }
 
