@@ -319,6 +319,18 @@ export class HermesAdapter {
         status: "accepted",
       });
     } catch (error) {
+      // The failure may have happened *after* spawnHermesTransport returned
+      // (the post-spawn progress event append, the timeout arm). The run is
+      // abandoned below, so nothing will ever supervise or reap that worker:
+      // handleExit bails on `session.active !== active`, and the transport
+      // keeps running until it finishes on its own. Kill it before the
+      // session is released so a failed accept cannot orphan a process tree.
+      if (active.transport) {
+        this.terminateTransport(active, "SIGKILL");
+        active.transport = null;
+      }
+      if (active.timeoutHandle) clearTimeout(active.timeoutHandle);
+      if (active.forceKillHandle) clearTimeout(active.forceKillHandle);
       const result = HermesTaskResultSchema.parse({
         execution_id: executionId,
         status: "failed",

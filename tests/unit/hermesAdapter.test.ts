@@ -493,6 +493,62 @@ describe("HermesAdapter", () => {
     }
   });
 
+  it("kills the spawned worker when accept bookkeeping fails after spawn", async () => {
+    const workdir = await makeTempDir("pi-hermes-work-");
+    const outputDir = await makeTempDir("pi-hermes-out-");
+    const adapter = await createAdapter();
+    const session = await adapter.start_session(workdir);
+
+    const internals = adapter as unknown as {
+      pushEvent: (session: unknown, event: { type: string; data?: Record<string, unknown> }) => Promise<void>;
+    };
+    const originalPushEvent = internals.pushEvent.bind(adapter);
+
+    let workerPid: number | null = null;
+    internals.pushEvent = async (storedSession, event) => {
+      // The post-spawn progress event is the first bookkeeping step that
+      // runs with a live worker behind it. Fail it there.
+      if (event.type === "task.progress" && typeof event.data?.pid === "number") {
+        workerPid = event.data.pid as number;
+        internals.pushEvent = originalPushEvent;
+        throw new Error("simulated post-spawn bookkeeping failure");
+      }
+      return originalPushEvent(storedSession, event);
+    };
+
+    const request = HermesTaskRequestSchema.parse({
+      request_id: "req_post_spawn_fail",
+      session_id: session.session_id,
+      execution_id: "exec_post_spawn_fail",
+      objective: "__SLOW__ keep running until something reaps me.",
+      workdir,
+      allowed_tools: [],
+      allowed_actions: ["read"],
+      timeout_seconds: 30,
+      output_dir: outputDir,
+      metadata: { mission_id: "m", run_id: "r", step_id: "s" },
+    });
+
+    await expect(adapter.send_task(session.session_id, request)).rejects.toThrow("simulated post-spawn bookkeeping failure");
+    expect(workerPid).toBeTypeOf("number");
+
+    // The abandoned run is no longer supervised (handleExit bails once the
+    // session released it), so the worker must have been killed on the way
+    // out rather than left running for its whole timeout budget.
+    const deadline = Date.now() + 5000;
+    let alive = true;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(workerPid as unknown as number, 0);
+        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+      } catch {
+        alive = false;
+        break;
+      }
+    }
+    expect(alive).toBe(false);
+  }, 15000);
+
   it("strips terminal erase characters without touching lines that have none", () => {
     const { stripAnsi } = __adapterTestables;
 
