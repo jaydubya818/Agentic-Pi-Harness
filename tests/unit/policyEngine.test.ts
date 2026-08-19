@@ -98,6 +98,49 @@ describe("PolicyEngine", () => {
     expect(decide("write_file", "tests/./math.test.ts")).toBe("approve");
   });
 
+  it("scopes approve rules to every path in a multi-path call", () => {
+    const multiDoc: PolicyDoc = {
+      schemaVersion: 1,
+      defaultAction: "deny",
+      rules: [
+        { id: "allow-tests-write", action: "approve", match: { tool: "write_file", pathPrefix: "tests" } },
+        { id: "deny-secrets", action: "deny", match: { pathPrefix: "secrets" } },
+      ],
+    };
+    const multiEngine = new PolicyEngine(multiDoc);
+    const decide = (paths: string[]) => multiEngine.decide({
+      toolCallId: "m",
+      toolName: "write_file",
+      mode: "assist",
+      input: { paths },
+      at: "2026-04-09T00:00:00Z",
+    });
+
+    // Every path in scope: the approve rule still wins.
+    expect(decide(["tests/a.ts", "tests/b.ts"]).result).toBe("approve");
+    // One path outside the approve rule's subtree must not be granted by it;
+    // the call falls through to the default deny instead.
+    const smuggled = decide(["tests/a.ts", "/etc/shadow"]);
+    expect(smuggled.result).toBe("deny");
+    expect(smuggled.winningRuleId).toBeNull();
+    // Deny rules keep "any path matches" semantics.
+    const denied = decide(["tests/a.ts", "secrets/key.pem"]);
+    expect(denied.result).toBe("deny");
+    expect(denied.winningRuleId).toBe("deny-secrets");
+  });
+
+  it("never matches a path-scoped rule against a call with no paths", () => {
+    const d = eng.decide({
+      toolCallId: "np",
+      toolName: "write_file",
+      mode: "assist",
+      input: { content: "no path here" },
+      at: "2026-04-09T00:00:00Z",
+    });
+    expect(d.result).toBe("deny");
+    expect(d.winningRuleId).toBeNull();
+  });
+
   it("falls through to explicit default deny", () => {
     const d = eng.decide({
       toolCallId: "c",
