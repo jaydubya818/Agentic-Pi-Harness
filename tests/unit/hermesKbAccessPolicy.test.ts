@@ -234,6 +234,31 @@ describe("KB access policy V1", () => {
     expect(await readFile(tombstonePath, "utf8")).toContain("# Tombstone");
   });
 
+  it("denies a Pi delete of a run-scoped supervision record", async () => {
+    const roots = await createRoots();
+    const supervisionPath = join(
+      roots.agenticKbRoot,
+      "missions/2026/mission-alpha/runs/run-1/supervision/review.json",
+    );
+    await writeKnowledgeJson({ actor: "pi", path: supervisionPath, value: { verdict: "approved" }, roots });
+
+    const events: string[] = [];
+    await expect(
+      deleteKnowledgePath({ actor: "pi", path: supervisionPath, roots, onEvent: (event) => { events.push(event.type); } }),
+    ).rejects.toThrow(/archive or tombstone instead/);
+    expect(events).toContain("kb.delete_denied");
+    // The governance record must survive the refused delete.
+    await expect(access(supervisionPath)).resolves.toBeUndefined();
+
+    // Traces stay deletable: KB_ACCESS_POLICY_V1 lets Pi compact or archive them.
+    const tracePath = join(
+      roots.agenticKbRoot,
+      "missions/2026/mission-alpha/runs/run-1/traces/trace-mission-alpha-run-1.jsonl",
+    );
+    await writeKnowledgeText({ actor: "pi", path: tracePath, content: "{\"event\":1}\n", roots });
+    await expect(deleteKnowledgePath({ actor: "pi", path: tracePath, roots })).resolves.toBeUndefined();
+  });
+
   it("enforces the promotion rule's source, target, and approval zones", async () => {
     const roots = await createRoots();
     const sourcePath = join(roots.llmWikiRoot, "drafts", "candidate.md");

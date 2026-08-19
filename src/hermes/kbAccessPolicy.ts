@@ -472,6 +472,31 @@ export async function promoteKnowledgeCandidate(input: PromoteKnowledgeCandidate
   return { targetPath, approvalPath };
 }
 
+/**
+ * KB classes Pi must archive or tombstone rather than unlink. These are the
+ * governance records the harness relies on to reconstruct what happened:
+ * canonical knowledge, the promotion pipeline, and both supervision zones.
+ *
+ * `kb_mission_supervision` (the run-scoped supervision record) belongs here
+ * for the same reason as top-level `kb_supervision` -- KB_ACCESS_POLICY_V1
+ * lists `missions/.../supervision/` as a Pi-only governance record -- but was
+ * omitted, so a run's review/approval lineage could be deleted outright while
+ * the identical top-level record was protected.
+ *
+ * `kb_mission_traces` is deliberately absent: the policy grants Pi explicit
+ * authority to "compact, summarize, or archive traces later if needed".
+ */
+const GOVERNED_DELETE_DENIED_CLASSES: KnowledgePathClass[] = [
+  "kb_contracts",
+  "kb_standards",
+  "kb_promoted",
+  "kb_normalized",
+  "kb_supervision",
+  "kb_mission_request",
+  "kb_mission_outputs",
+  "kb_mission_supervision",
+];
+
 export async function deleteKnowledgePath(input: DeleteKnowledgePathInput): Promise<void> {
   const path = resolve(input.path);
   const info = classifyKnowledgePath(path, input.roots);
@@ -515,7 +540,7 @@ export async function deleteKnowledgePath(input: DeleteKnowledgePathInput): Prom
     }
   }
 
-  if (input.actor === "pi" && info.inAgenticKb && ["kb_contracts", "kb_standards", "kb_promoted", "kb_normalized", "kb_supervision", "kb_mission_request", "kb_mission_outputs"].includes(info.pathClass)) {
+  if (input.actor === "pi" && info.inAgenticKb && GOVERNED_DELETE_DENIED_CLASSES.includes(info.pathClass)) {
     await emitPolicyEvent(input.onEvent, info, {
       type: "kb.delete_denied",
       actor: input.actor,
