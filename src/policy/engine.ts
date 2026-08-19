@@ -47,10 +47,27 @@ export function ruleMatches(rule: PolicyRule, input: DecisionInput): boolean {
   const match = rule.match ?? {};
   if (match.tool && match.tool !== input.toolName) return false;
   if (match.mode && match.mode !== input.mode) return false;
+  if (!match.path && !match.pathPrefix) return true;
 
   const paths = pathsOf(input.input).map(normalizePolicyPath);
-  if (match.path && !paths.some((path) => path === normalizePolicyPath(match.path!))) return false;
-  if (match.pathPrefix && !paths.some((path) => pathHasPrefix(path, match.pathPrefix!))) return false;
+  // A path-scoped rule can never match a call that carries no paths at all:
+  // `every` below would be vacuously true and hand an approve rule to a call
+  // whose targets the rule was never able to inspect.
+  if (paths.length === 0) return false;
+
+  // An `approve` rule grants authority, so it must cover *every* path the
+  // call touches. Plain `some` let a multi-path write ride a narrowly scoped
+  // approve rule out of its subtree: `{ paths: ["tests/a", "/etc/shadow"] }`
+  // matched `pathPrefix: "tests"` and was approved wholesale, and the
+  // out-of-scope path never reached the deny rule below it. `deny` and `ask`
+  // keep `some` semantics -- one in-scope path is enough to block or
+  // escalate the whole call.
+  const matchesPaths = rule.action === "approve"
+    ? (predicate: (path: string) => boolean) => paths.every(predicate)
+    : (predicate: (path: string) => boolean) => paths.some(predicate);
+
+  if (match.path && !matchesPaths((path) => path === normalizePolicyPath(match.path!))) return false;
+  if (match.pathPrefix && !matchesPaths((path) => pathHasPrefix(path, match.pathPrefix!))) return false;
 
   return true;
 }
