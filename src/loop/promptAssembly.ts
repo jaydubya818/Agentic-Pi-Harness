@@ -22,8 +22,39 @@ export interface PromptAssemblyResult extends WrapResult {
   prompt: string;
 }
 
+/**
+ * ANSI removal. The previous spelling only recognised CSI sequences whose
+ * final byte was one of `mGKH`, so anything else -- cursor moves (`\x1b[1A`),
+ * scroll regions, OSC hyperlinks/titles -- kept its parameter bytes. The
+ * control-char pass below then deleted the lone ESC and left the parameter
+ * text (`[1A`, `]8;;https://...`) sitting in the prompt as literal content.
+ *
+ * These are the same patterns `hermes/adapter.ts` already uses on worker
+ * output; the two sanitizers should not disagree about what an escape is.
+ */
+const OSC_SEQUENCE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const CSI_SEQUENCE = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+/** nF sequences: ESC, one or more intermediates, one final byte (e.g. ESC ( B). */
+const NF_SEQUENCE = /\x1b[ -/]+[0-~]/g;
+/**
+ * Fe two-character escapes (ESC D, ESC M, ESC \, ...), minus CSI and OSC
+ * which are handled above. Deliberately not the whole `ESC <0x30-0x7e>`
+ * space: a lone ESC wedged inside a word is far more likely to be a tag
+ * split (`<pol\x1bicy>`) than a real escape, and for those the right
+ * behaviour is to drop only the ESC in the control-char pass, let the tag
+ * reassemble, and have escapeNestedTags neutralise it.
+ */
+const TWO_CHAR_ESCAPE = /\x1b[@-Z\\-_]/g;
+
 function stripAnsi(input: string): string {
-  return input.replace(/\x1b\[[0-9;]*[mGKH]/g, "");
+  // Ordered longest-form first: OSC bodies can contain `[`, and both OSC and
+  // CSI start with a byte the two-character rule would otherwise consume on
+  // its own, leaving the rest of the sequence behind as literal text.
+  return input
+    .replace(OSC_SEQUENCE, "")
+    .replace(CSI_SEQUENCE, "")
+    .replace(NF_SEQUENCE, "")
+    .replace(TWO_CHAR_ESCAPE, "");
 }
 
 function escapeNestedTags(input: string): string {
@@ -32,8 +63,16 @@ function escapeNestedTags(input: string): string {
   );
 }
 
+/**
+ * Control characters, minus the three whitespace ones (\t, \n, \r) that are
+ * ordinary tool output. DEL (\x7f) and the C1 block (\x80-\x9f) were missing:
+ * DEL is an erase character elsewhere in this harness (see
+ * stripBackspaceArtifacts in hermes/adapter.ts) and \u009b is a single-byte
+ * CSI introducer, so leaving either in place kept exactly the "invisible
+ * character splices a tag back together" hazard the C0 strip exists to close.
+ */
 function stripControlChars(input: string): string {
-  return input.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+  return input.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\u009f]/g, "");
 }
 
 function truncateUtf8(input: string, maxBytes: number): { text: string; truncatedBytes: number } {
