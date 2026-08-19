@@ -338,8 +338,17 @@ export class HermesBridgeServer {
         env: body.env,
         profile: body.profile,
       });
-      this.sessions.set(session.session_id, session);
-      await this.stateStore.persistSession(session);
+      try {
+        this.sessions.set(session.session_id, session);
+        await this.stateStore.persistSession(session);
+      } catch (error) {
+        // The adapter already allocated the session (runtime dir, worker
+        // slot) but the caller is about to get a 500 and will never learn
+        // its id, so nothing can ever close it: the same post-accept leak
+        // releaseFailedAccept fixes for /execute. Release it here.
+        await this.releaseFailedSessionStart(session.session_id, error);
+        throw new BridgeRequestError(500, `bridge failed to record session ${session.session_id}: ${error instanceof Error ? error.message : String(error)}`);
+      }
       json(res, 200, session);
       return;
     }
@@ -667,6 +676,24 @@ export class HermesBridgeServer {
    * execution id. Best-effort cancel the worker, drop the phantom record,
    * and surface the failure as a bridge error instead of a denial.
    */
+  /**
+   * Drop a session the bridge could not record. Mirrors releaseFailedAccept:
+   * a session the caller never receives an id for is unreachable, so the
+   * adapter-side resources behind it must not survive the failed request.
+   */
+  private async releaseFailedSessionStart(sessionId: string, error: unknown): Promise<void> {
+    this.sessions.delete(sessionId);
+    try {
+      await this.adapter.close_session(sessionId);
+    } catch {
+      // best-effort: dropping the record above is what unwedges the bridge
+    }
+    this.logger.log("error", "hermes.bridge.session_start_failure", {
+      sessionId,
+      error: String(error),
+    });
+  }
+
   private async releaseFailedAccept(sessionId: string, executionId: string, error: unknown): Promise<BridgePostAcceptError> {
     try {
       await this.adapter.cancel(sessionId, executionId);

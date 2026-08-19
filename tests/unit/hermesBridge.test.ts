@@ -1,8 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { HermesBridgeServer } from "../../src/hermes/httpBridge.js";
+import { HermesAdapter } from "../../src/hermes/adapter.js";
 import { HermesBridgeStateStore } from "../../src/hermes/bridgeState.js";
 import { runTaskViaBridge } from "../../src/hermes/bridgeClient.js";
 
@@ -64,6 +65,54 @@ describe("HermesBridgeServer", () => {
       expect(health.status).toBe(200);
     } finally {
       await first.stop();
+    }
+  });
+
+  it("releases the adapter session when the bridge cannot record it", async () => {
+    const workdir = await makeTempDir("pi-hermes-session-persist-work-");
+    const stateRoot = await makeTempDir("pi-hermes-session-persist-state-");
+    const adapter = new HermesAdapter({
+      command: process.execPath,
+      commandArgsPrefix: [resolve("tests/fixtures/fake-hermes.mjs")],
+      preferTransport: "subprocess",
+      stateRoot,
+    });
+    const closeSpy = vi.spyOn(adapter, "close_session");
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+      adapter,
+    });
+    const listening = await server.start();
+    try {
+      // Make the persist step fail after the adapter has already allocated
+      // the session. The caller never learns the session id on this path, so
+      // without an explicit release the adapter session is unreachable and
+      // leaks for the life of the bridge.
+      await chmod(join(stateRoot, "sessions"), 0o500);
+      let enforced = true;
+      try {
+        await writeFile(join(stateRoot, "sessions", "probe.json"), "x", "utf8");
+        enforced = false;
+      } catch { /* expected */ }
+      if (!enforced) return;
+
+      const response = await fetch(`http://${listening.host}:${listening.port}/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ workdir }),
+      });
+      expect(response.status).toBe(500);
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+
+      await chmod(join(stateRoot, "sessions"), 0o700);
+      const listed = await fetch(`http://${listening.host}:${listening.port}/sessions`);
+      expect(await listed.json()).toMatchObject({ count: 0 });
+    } finally {
+      await chmod(join(stateRoot, "sessions"), 0o700).catch(() => {});
+      await server.stop();
     }
   });
 
