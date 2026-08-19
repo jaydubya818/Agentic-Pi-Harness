@@ -28,6 +28,44 @@ async function createAdapter(options: { maxRetainedOutputChars?: number } = {}) 
 }
 
 describe("HermesAdapter", () => {
+  it("scopes collect_result to the execution the caller names", async () => {
+    const workdir = await makeTempDir("pi-hermes-scoped-work-");
+    const outputDir = await makeTempDir("pi-hermes-scoped-out-");
+    const adapter = await createAdapter();
+    const session = await adapter.start_session(workdir);
+
+    const makeRequest = (requestId: string, executionId: string) => HermesTaskRequestSchema.parse({
+      request_id: requestId,
+      session_id: session.session_id,
+      execution_id: executionId,
+      objective: "Write a report to the output dir and summarize it.",
+      workdir,
+      allowed_tools: ["bash"],
+      allowed_actions: ["read", "write"],
+      timeout_seconds: 10,
+      output_dir: outputDir,
+      metadata: { mission_id: "mission-scoped", run_id: "run-scoped", step_id: "step-1" },
+    });
+
+    const first = await adapter.send_task(session.session_id, makeRequest("req_scoped_1", "exec_scoped_1"));
+    const firstResult = await adapter.collect_result(session.session_id, first.execution_id);
+    expect(firstResult.execution_id).toBe("exec_scoped_1");
+    expect(firstResult.status).toBe("completed");
+
+    // Start a second execution on the same session. An unscoped collect
+    // now answers for run 2, so a watcher still finishing run 1 would have
+    // recorded run 2's outcome against run 1.
+    await adapter.send_task(session.session_id, makeRequest("req_scoped_2", "exec_scoped_2"));
+    const stillFirst = await adapter.collect_result(session.session_id, "exec_scoped_1");
+    expect(stillFirst.execution_id).toBe("exec_scoped_1");
+
+    const secondResult = await adapter.collect_result(session.session_id, "exec_scoped_2");
+    expect(secondResult.execution_id).toBe("exec_scoped_2");
+
+    await expect(adapter.collect_result(session.session_id, "exec_never_ran"))
+      .rejects.toThrow(/no Hermes result for execution exec_never_ran/);
+  }, 20000);
+
   it("runs a one-shot Hermes task and collects a structured result", async () => {
     const workdir = await makeTempDir("pi-hermes-work-");
     const outputDir = await makeTempDir("pi-hermes-out-");

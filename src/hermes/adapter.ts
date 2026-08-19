@@ -436,8 +436,24 @@ export class HermesAdapter {
     }, 3000);
   }
 
-  async collect_result(sessionId: string): Promise<HermesTaskResult> {
+  /**
+   * Collect the result of an execution on this session.
+   *
+   * `executionId` scopes the lookup to one execution and should be passed by
+   * any supervisor that reuses a session for sequential runs. Without it the
+   * call resolves "whatever this session is doing now", which is a different
+   * question once a second execution has started: a watcher that finished
+   * draining run A's events could be handed run B's completion promise and
+   * then record B's outcome as A's. The unscoped form is kept for the demo
+   * and smoke CLIs, which drive one execution at a time.
+   */
+  async collect_result(sessionId: string, executionId?: string): Promise<HermesTaskResult> {
     const session = this.requireSession(sessionId);
+    if (executionId) {
+      if (session.active?.executionId === executionId) return session.active.completion;
+      if (session.lastResult?.execution_id === executionId) return session.lastResult;
+      throw new Error(`session ${sessionId} has no Hermes result for execution ${executionId}`);
+    }
     if (session.active) return session.active.completion;
     if (session.lastResult) return session.lastResult;
     throw new Error(`session ${sessionId} has no Hermes result to collect`);
