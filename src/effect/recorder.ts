@@ -5,24 +5,49 @@ import { dirname } from "node:path";
 import { EffectRecord, EffectRecordSchema, parseOrThrow } from "../schemas/index.js";
 import { PiHarnessError } from "../errors.js";
 
+/** Recorded when a path genuinely has no regular file at it. */
+const ABSENT = "absent";
+/**
+ * Recorded when a path could not be hashed for a reason that is *not*
+ * "nothing is there" -- EACCES, EIO, a vanished parent directory. Collapsing
+ * those onto `absent` made the effect record assert something false: an
+ * unreadable file that the tool did not touch showed up as absent-before and
+ * absent-after, i.e. "this path did not exist and still does not", which is
+ * exactly the kind of claim the tape exists to make impossible to fake.
+ */
+const UNREADABLE = "unreadable";
+
+function isMissingEntryError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 /**
  * Hashed by streaming rather than readFile: pre/post hashing runs on every
  * path a mutating tool touches, and buffering the whole file just to hash it
  * put the largest touched file fully in RAM twice per tool call. On a Pi that
  * is the difference between a bounded working set and an OOM kill on a big
  * build artifact or dataset the agent happened to write.
+ *
+ * Returns the ABSENT / UNREADABLE markers rather than a hash so callers can
+ * tell "no file here" apart from "a file we could not read".
  */
-async function hashFile(path: string): Promise<string | null> {
+async function hashFile(path: string): Promise<string> {
+  let info;
   try {
-    const s = await stat(path);
-    if (!s.isFile()) return null;
+    info = await stat(path);
+  } catch (error) {
+    return isMissingEntryError(error) ? ABSENT : UNREADABLE;
+  }
+  if (!info.isFile()) return ABSENT;
+  try {
     const hash = createHash("sha256");
     for await (const chunk of createReadStream(path)) {
       hash.update(chunk as Buffer);
     }
     return "sha256:" + hash.digest("hex");
-  } catch {
-    return null;
+  } catch (error) {
+    return isMissingEntryError(error) ? ABSENT : UNREADABLE;
   }
 }
 
@@ -89,6 +114,11 @@ function unifiedDiff(a: string, b: string, path: string): string {
          body.join("\n") + "\n";
 }
 
+function unreadableDiffMarker(path: string): string {
+  return `--- a/${path}\n+++ b/${path}\n@@ @@\n` +
+         `[diff omitted: file could not be read for hashing on at least one side]\n`;
+}
+
 function oversizedDiffMarker(path: string): string {
   return `--- a/${path}\n+++ b/${path}\n@@ @@\n` +
          `[diff omitted: file exceeds the ${MAX_DIFF_TEXT_BYTES}-byte diff text budget]\n`;
@@ -133,7 +163,7 @@ export class EffectScope {
   async snapshotPre(paths: string[]): Promise<void> {
     for (const p of paths) {
       try {
-        const hash = (await hashFile(p)) ?? "absent";
+        const hash = await hashFile(p);
         const text = await readText(p);
         this.pre.set(p, { hash, text });
       } catch (e) {
@@ -150,12 +180,19 @@ export class EffectScope {
     let binaryChanged = false;
 
     for (const p of orderedPaths) {
-      const preEntry = this.pre.get(p) ?? { hash: "absent", text: null };
-      const postHash = (await hashFile(p)) ?? "absent";
+      const preEntry = this.pre.get(p) ?? { hash: ABSENT, text: null };
+      const postHash = await hashFile(p);
       preHashes[p] = preEntry.hash;
       postHashes[p] = postHash;
 
       if (preEntry.hash === postHash) continue;
+
+      if (preEntry.hash === UNREADABLE || postHash === UNREADABLE) {
+        // No content to diff on at least one side, and calling that a binary
+        // change would be another false claim. Say what actually happened.
+        diffs.push(unreadableDiffMarker(p));
+        continue;
+      }
 
       const postText = await readText(p);
       if (preEntry.text === OVERSIZED || postText === OVERSIZED) {
