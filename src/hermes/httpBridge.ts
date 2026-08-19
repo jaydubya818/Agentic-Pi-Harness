@@ -155,11 +155,29 @@ export class HermesBridgeServer {
     this.server.requestTimeout = 30_000;
     this.server.keepAliveTimeout = 5_000;
 
-    await new Promise<void>((resolvePromise) => {
-      this.server!.listen(this.port, this.host, () => resolvePromise());
+    // listen() reports bind failures (EADDRINUSE from a second bridge or a
+    // stale process, EACCES on a privileged port) by emitting 'error' on the
+    // server. With no listener for it, Node turns that into an uncaught
+    // exception that kills the whole supervisor process, and this promise
+    // never settles -- so callers could not even fall back to another port.
+    // Reject instead, and drop the half-built server so a retry is possible.
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      const server = this.server!;
+      const onError = (error: Error) => {
+        server.removeListener("listening", onListening);
+        this.server = null;
+        rejectPromise(error);
+      };
+      const onListening = () => {
+        server.removeListener("error", onError);
+        resolvePromise();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(this.port, this.host);
     });
 
-    const address = this.server.address();
+    const address = this.server!.address();
     const port = typeof address === "object" && address ? address.port : this.port;
     this.logger.log("info", "hermes.bridge.started", { host: this.host, port });
     return { host: this.host, port };
