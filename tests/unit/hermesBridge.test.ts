@@ -40,6 +40,33 @@ describe("HermesBridgeServer", () => {
     await server.stop();
   });
 
+  it("rejects a start() whose bind fails instead of crashing the process", async () => {
+    const firstStateRoot = await makeTempDir("pi-hermes-bridge-bind-a-");
+    const secondStateRoot = await makeTempDir("pi-hermes-bridge-bind-b-");
+    const first = new HermesBridgeServer({ host: "127.0.0.1", port: 0, stateRoot: firstStateRoot, enforceKnowledgePolicy: false });
+    const listening = await first.start();
+    try {
+      const second = new HermesBridgeServer({
+        host: "127.0.0.1",
+        port: listening.port,
+        stateRoot: secondStateRoot,
+        enforceKnowledgePolicy: false,
+      });
+      // Without an 'error' listener on the http server, an occupied port
+      // emitted an unhandled 'error' that killed the whole process while
+      // start() never settled.
+      await expect(second.start()).rejects.toMatchObject({ code: "EADDRINUSE" });
+      // The half-built server is dropped, so stop() is a no-op and the port
+      // stays available for a retry once the holder releases it.
+      await expect(second.stop()).resolves.toBeUndefined();
+
+      const health = await fetch(`http://${listening.host}:${listening.port}/healthz`);
+      expect(health.status).toBe(200);
+    } finally {
+      await first.stop();
+    }
+  });
+
   it("requires bearer auth when bridge token configured", async () => {
     const workdir = await makeTempDir("pi-hermes-bridge-auth-work-");
     const outputDir = await makeTempDir("pi-hermes-bridge-auth-out-");
