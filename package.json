@@ -22,6 +22,7 @@
     "test:watch": "vitest",
     "bench": "vitest run --config vitest.bench.config.ts",
     "lint": "eslint --ext .ts src tests",
+    "check:secrets": "node scripts/check-secrets.mjs",
     "dev": "tsx src/cli/index.ts",
     "doctor": "tsx src/cli/doctor.ts",
     "hermes:bridge": "tsx src/cli/hermes-bridge.ts",

@@ -15,15 +15,17 @@ a 1–5 scale; mitigations map to existing code or roadmap items.
 | R8 | Hook timeout stalls turn | 2 | 3 | 6 | runtime | Per-hook `withTimeout`, `hooksConcurrency.test.ts` |
 | R9 | Hash-chain latency regresses on slow CPUs / slow storage | 3 | 2 | 6 | runtime | `hashChain.bench.test.ts` opt-in env-aware ceiling (`PI_HASHCHAIN_BENCH_CEILING_MS`, defaults 12ms local / 16ms CI) |
 | R10 | Replay drift between two runs not caught in CI | 2 | 4 | 8 | ci | `.github/workflows/ci.yml` replay-drift job, `scripts/compare-effects.mjs` path-agnostic |
-| R11 | Signed policy key leaks via process env | 2 | 5 | 10 | ops | Documented in HOOK-SECURITY.md — keys loaded from env, rotated via normal secret rotation |
+| R11 | Signed policy key leaks via process env | 2 | 5 | 10 | ops | Documented in HOOK-SECURITY.md — keys loaded from env, rotated via normal secret rotation; `scripts/check-secrets.mjs` pre-commit guard refuses staged key material and literal credentials (`checkSecrets.test.ts`) |
 | R12 | Dependency (zod) vulnerability | 2 | 3 | 6 | ops | Only one runtime dep; `npm audit` on CI (not yet wired — add in 0.1.1) |
 | R13 | Deterministic replay breaks under non-POSIX filesystems | 3 | 3 | 9 | runtime | Documented POSIX-only in README; Windows deferred to ADR 0004 C3 |
 | R14 | Compaction eats a decision that should have persisted | 2 | 3 | 6 | runtime | `CompactionRecord` audit trail; compaction is pure, never mutates tape |
 
 ## Top 3 to watch in 0.2.0
 
-1. **R11** (key leaks) — no programmatic check exists. Add a pre-commit
-   guard that refuses to commit files matching `*.key` or `*.pem`.
+1. **R11** (key leaks) — a pre-commit guard now refuses staged key material
+   (`*.pem`, `*.key`, `id_rsa`, a real `.env`) and self-identifying
+   credentials in staged content. It cannot see a key that only ever lives
+   in the environment, which remains the residual risk.
 2. **R13** (filesystem assumptions) — won't surface until someone tries it
    on NTFS. Add a Windows smoke CI job before Tier C C3 lands.
 3. **R12** (deps) — trivial to wire `npm audit` into CI. Do in 0.1.1 patch.
