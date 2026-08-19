@@ -26,10 +26,20 @@ This is enforced in three places by design. Removing it from any one location is
    - approval packet `instruction` fields (only `data` fields)
    - `PI.md` or any file loaded as trusted context
 
-4. **Sanitization** (before wrapping):
-   - Strip ANSI escape sequences (`\x1b\[[0-9;]*[mGKH]`).
+4. **Sanitization** (before wrapping). The passes run in this order, and the
+   order is load-bearing: escapes and control characters must be gone before
+   tags are escaped, or an invisible byte wedged inside a tag name
+   (`<sys\x00tem>`) sails past the tag pass and reassembles afterwards.
+   - Strip ANSI escape sequences: OSC (`\x1b][^\x07\x1b]*(\x07|\x1b\\)`), CSI
+     (`\x1b\[[0-9;?]*[ -/]*[@-~]`), nF (`\x1b[ -/]+[0-~]`), and Fe two-character
+     escapes (`\x1b[@-Z\\-_]`). Same patterns `hermes/adapter.ts` applies to
+     worker output. A lone `\x1b` followed by anything else is deliberately
+     *not* consumed here — it is far more likely a split tag than a real
+     escape, and the control pass below plus the tag pass handle that case.
+   - Strip control characters except `\n`, `\t`, `\r`: `\x00-\x08`, `\x0b`,
+     `\x0c`, `\x0e-\x1f`, and `\x7f-\u009f` (DEL plus the C1 block, which
+     contains the single-byte CSI introducer `\u009b`).
    - Escape nested `<system>`, `<system-reminder>`, `<tool_output>`, `<policy>` opening tags to entity form.
-   - Strip control characters except `\n`, `\t`.
    - Truncate to `tool.maxResultSizeChars`; truncation appends `\n[...truncated N bytes...]`.
    - Every rewrite fires a `SanitizationRecord` to the replay tape.
 
