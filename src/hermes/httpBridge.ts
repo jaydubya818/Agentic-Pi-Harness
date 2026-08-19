@@ -736,7 +736,12 @@ export class HermesBridgeServer {
         }
       }
 
-      const result = await this.adapter.collect_result(run.session.session_id);
+      // Scoped to this execution: a session that has already accepted the
+      // next run would otherwise hand this watcher the new execution's
+      // completion promise, and run A would be finalized with run B's
+      // result. The gap is real -- the watcher yields on persisting each
+      // event, which is long enough for a queued POST /execute to land.
+      const result = await this.adapter.collect_result(run.session.session_id, run.accepted.execution_id);
       run.result = result;
       run.status = result.status;
 
