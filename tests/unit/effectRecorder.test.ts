@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -69,6 +69,46 @@ describe("effect recorder", () => {
     expect(record.binaryChanged).toBe(false);
     expect(record.unifiedDiff).toContain("diff text budget");
     expect(record.unifiedDiff.length).toBeLessThan(500);
+  });
+
+  it("distinguishes an unreadable path from an absent one", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-effect-unreadable-"));
+    const locked = join(dir, "locked", "secret.txt");
+    await mkdir(join(dir, "locked"));
+    await writeFile(locked, "classified\n");
+    // Make the parent directory non-traversable so stat() fails with EACCES
+    // rather than ENOENT. Skipped when the test user can ignore the mode
+    // (root, or a filesystem that does not enforce it).
+    await chmod(join(dir, "locked"), 0o000);
+    let enforced = true;
+    try {
+      await readFile(locked, "utf8");
+      enforced = false;
+    } catch { /* expected */ }
+
+    try {
+      if (!enforced) return;
+      const recorder = new EffectRecorder();
+      await recorder.snapshotPre([locked], "tool-locked");
+      const record = await recorder.capturePost("session-1", "tool-locked", "write_file", [locked]);
+
+      // Collapsing EACCES onto "absent" made the record claim the file did
+      // not exist before or after the call, which is a false claim about the
+      // filesystem, not a missing detail.
+      expect(record.preHashes[locked]).toBe("unreadable");
+      expect(record.postHashes[locked]).toBe("unreadable");
+      expect(record.binaryChanged).toBe(false);
+
+      // A genuinely missing path still reports absent.
+      const missing = join(dir, "not-there.txt");
+      const missingRecorder = new EffectRecorder();
+      await missingRecorder.snapshotPre([missing], "tool-missing");
+      const missingRecord = await missingRecorder.capturePost("session-1", "tool-missing", "write_file", [missing]);
+      expect(missingRecord.preHashes[missing]).toBe("absent");
+      expect(missingRecord.postHashes[missing]).toBe("absent");
+    } finally {
+      await chmod(join(dir, "locked"), 0o700).catch(() => {});
+    }
   });
 
   it("discard releases a pre-snapshot scope so a failed tool call does not retain it", async () => {
