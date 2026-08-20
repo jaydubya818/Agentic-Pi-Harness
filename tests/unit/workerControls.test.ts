@@ -83,4 +83,32 @@ describe("worker controls", () => {
       toolInput: { command: "echo hi" },
     })).toMatchObject({ allowed: false, manifestInfluence: { field: "workerControl", value: "exclusiveDenied" } });
   });
+  it("inspects both `path` and `paths` when a write carries both", () => {
+    // `{ path, paths }` used to have only `path` read, so the extra targets
+    // escaped both the prefix allowlist and the write-path cap.
+    expect(evaluateWorkerToolUse({
+      mode: "worker",
+      workerControls: { signedPolicy: true, allowedWritePathPrefixes: ["sandbox"] },
+      toolName: "write_file",
+      toolClass: "serial",
+      toolInput: { path: "sandbox/ok.txt", paths: ["/etc/shadow"] },
+    })).toMatchObject({ allowed: false, manifestInfluence: { field: "workerControl", value: "writePathPrefix" } });
+
+    expect(evaluateWorkerToolUse({
+      mode: "worker",
+      workerControls: { signedPolicy: true, maxWritePaths: 2 },
+      toolName: "write_file",
+      toolClass: "serial",
+      toolInput: { path: "sandbox/a.txt", paths: ["sandbox/b.txt", "sandbox/c.txt"] },
+    })).toMatchObject({ allowed: false, manifestInfluence: { field: "workerControl", value: "maxWritePaths" } });
+
+    // The union is de-duplicated, so repeating one path does not inflate the count.
+    expect(evaluateWorkerToolUse({
+      mode: "worker",
+      workerControls: { signedPolicy: true, maxWritePaths: 1, allowedWritePathPrefixes: ["sandbox"] },
+      toolName: "write_file",
+      toolClass: "serial",
+      toolInput: { path: "sandbox/a.txt", paths: ["sandbox/a.txt"] },
+    })).toMatchObject({ allowed: true });
+  });
 });
