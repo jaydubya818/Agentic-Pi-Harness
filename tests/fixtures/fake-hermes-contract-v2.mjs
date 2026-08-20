@@ -74,6 +74,24 @@ async function maybeWriteDiscovery(artifacts) {
   await writeFile(discovery.path, `${frontmatter(discovery.path, "discovery-artifact")}# Discovery Candidate\n\nA useful candidate was discovered during the governed mission.\n`, "utf8");
 }
 
+/**
+ * Flush stdout/stderr before exiting.
+ *
+ * `process.exit()` abandons anything still queued on a pipe, so a worker that
+ * has just streamed a large backlog can lose its own result block. That is
+ * exactly the tail the adapter parses, so exiting without flushing makes the
+ * adapter tests fail intermittently under load.
+ */
+function exitAfterFlush(code) {
+  let pending = 2;
+  const done = () => {
+    pending -= 1;
+    if (pending === 0) process.exit(code);
+  };
+  process.stdout.write("", done);
+  process.stderr.write("", done);
+}
+
 async function finish() {
   const artifacts = extractExpectedArtifacts(query);
   await maybeWriteSummary(artifacts);
@@ -84,7 +102,8 @@ async function finish() {
     console.log('{"summary":"broken"');
     console.log("PI_TASK_RESULT_JSON>>");
     console.error(`session_id: ${sessionId}`);
-    process.exit(0);
+    exitAfterFlush(0);
+    return;
   }
 
   console.log("worker progress");
@@ -98,7 +117,7 @@ async function finish() {
   }));
   console.log("PI_TASK_RESULT_JSON>>");
   console.error(`session_id: ${sessionId}`);
-  process.exit(0);
+  exitAfterFlush(0);
 }
 
 process.on("SIGTERM", () => process.exit(143));
