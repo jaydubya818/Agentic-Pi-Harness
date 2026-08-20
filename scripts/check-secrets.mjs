@@ -44,13 +44,26 @@ const SECRET_PATH_ALLOWLIST = [
 const SECRET_CONTENT_PATTERNS = [
   { pattern: /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----/, why: "inline private key" },
   { pattern: /\bghp_[A-Za-z0-9]{30,}\b/, why: "github personal access token" },
+  // gho_/ghu_/ghs_/ghr_ are GitHub's OAuth, user-to-server, server-to-server
+  // (Actions/App), and refresh token prefixes. Only ghp_ was covered, and a
+  // leaked Actions or App installation token is exactly as usable as a PAT.
+  { pattern: /\bgh[ousr]_[A-Za-z0-9]{30,}\b/, why: "github oauth/app token" },
   { pattern: /\bgithub_pat_[A-Za-z0-9_]{50,}\b/, why: "github fine-grained pat" },
   { pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/, why: "slack token" },
   { pattern: /\bAKIA[0-9A-Z]{16}\b/, why: "aws access key id" },
   { pattern: /\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{24,}\b/, why: "model provider api key" },
+  { pattern: /\bnpm_[A-Za-z0-9]{36}\b/, why: "npm access token" },
+  { pattern: /\bAIza[A-Za-z0-9_-]{35}\b/, why: "google api key" },
   // The harness's own bearer token, assigned a literal rather than read from
   // the environment (see hermes-bridge --auth-token / PI_HERMES_BRIDGE_TOKEN).
-  { pattern: /PI_HERMES_BRIDGE_TOKEN\s*[=:]\s*["'][^"'$][^"']*["']/, why: "hardcoded bridge auth token" },
+  // Quotes are optional: the shape this actually leaks in is an unquoted
+  // shell or .env-style assignment, and the quote-only pattern walked
+  // straight past those.
+  // The lookahead keeps every legitimate indirection ("$VAR", $(cat ...),
+  // process.env...) from tripping the guard, and the horizontal-only
+  // whitespace class stops an empty assignment from reaching across the
+  // newline and matching the next line's identifier.
+  { pattern: /PI_HERMES_BRIDGE_TOKEN[ \t]*[=:][ \t]*["']?(?!["'$\s])[A-Za-z0-9_\-+/=.]{8,}/, why: "hardcoded bridge auth token" },
 ];
 
 export function classifyStagedPath(path) {
