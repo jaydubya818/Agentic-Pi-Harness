@@ -172,10 +172,19 @@ Bridge state is persistent by default under:
 
 Override with `--state-root <path>` if you want a different durable store root.
 
-If you omit `--auth-token`, the bridge stays open on the bound interface. Recommended local-safe default:
+If you omit `--auth-token`, the bridge accepts any local caller on the bound
+interface. That is only allowed on loopback: `start()` refuses a non-loopback
+bind with no token, and refuses a blank one (an empty token is a
+misconfiguration, never "auth disabled"). Loopback still is not a boundary
+against a browser, so the bridge additionally rejects any request whose `Host`
+is not a loopback address or that carries an `Origin` header.
+
+Recommended local-safe default — generate a real token rather than committing
+a placeholder, and pass it through the environment so it does not land in `ps`
+output:
 
 ```bash
-export PI_HERMES_BRIDGE_TOKEN="replace-me"
+export PI_HERMES_BRIDGE_TOKEN="$(openssl rand -hex 24)"
 npm run hermes:bridge -- --host 127.0.0.1 --port 8787
 ```
 
