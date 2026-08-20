@@ -59,6 +59,23 @@ export function classifyStagedPath(path) {
   return hit ? hit.why : null;
 }
 
+/**
+ * The guard's own source and its test suite contain every pattern above by
+ * construction. Without this exemption the content pass refused any commit
+ * that touched them, so the hook could never be edited or extended with
+ * itself installed — and the escape hatch (`--no-verify`) disables the guard
+ * for the whole commit, including the files that actually needed checking.
+ * The path pass still applies: this only skips the content scan.
+ */
+const GUARD_OWN_FIXTURES = [
+  /(?:^|\/)scripts\/check-secrets\.mjs$/,
+  /(?:^|\/)tests\/unit\/checkSecrets\.test\.ts$/,
+];
+
+export function isGuardOwnFixture(path) {
+  return GUARD_OWN_FIXTURES.some((entry) => entry.test(path));
+}
+
 export function scanContentForSecrets(text) {
   return SECRET_CONTENT_PATTERNS.filter((entry) => entry.pattern.test(text)).map((entry) => entry.why);
 }
@@ -85,6 +102,7 @@ function main() {
   for (const path of stagedFiles()) {
     const pathWhy = classifyStagedPath(path);
     if (pathWhy) findings.push(`${path}: ${pathWhy}`);
+    if (isGuardOwnFixture(path)) continue;
     const content = stagedContent(path);
     if (content === null) continue;
     for (const why of scanContentForSecrets(content)) findings.push(`${path}: ${why}`);

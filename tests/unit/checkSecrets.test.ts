@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - plain .mjs guard script, no type declarations
-import { classifyStagedPath, scanContentForSecrets } from "../../scripts/check-secrets.mjs";
+import { classifyStagedPath, isGuardOwnFixture, scanContentForSecrets } from "../../scripts/check-secrets.mjs";
 
 describe("staged-secret guard (RISK-REGISTER R11)", () => {
   it("flags key material by path", () => {
@@ -23,6 +23,15 @@ describe("staged-secret guard (RISK-REGISTER R11)", () => {
     expect(scanContentForSecrets(`const t = "AKIA${"A".repeat(16)}";`)).toContain("aws access key id");
     expect(scanContentForSecrets(`token: "ghp_${"a".repeat(36)}"`)).toContain("github personal access token");
     expect(scanContentForSecrets('PI_HERMES_BRIDGE_TOKEN="s3cr3t-literal"')).toContain("hardcoded bridge auth token");
+  });
+
+  it("exempts its own source and test from the content pass", () => {
+    // Both files carry every pattern by construction; without the exemption
+    // the guard refused any commit that touched them.
+    expect(isGuardOwnFixture("scripts/check-secrets.mjs")).toBe(true);
+    expect(isGuardOwnFixture("tests/unit/checkSecrets.test.ts")).toBe(true);
+    expect(isGuardOwnFixture("src/hermes/httpBridge.ts")).toBe(false);
+    expect(isGuardOwnFixture("scripts/check-schema-drift.mjs")).toBe(false);
   });
 
   it("does not trip on the hashes, digests, and signatures this repo commits", () => {
