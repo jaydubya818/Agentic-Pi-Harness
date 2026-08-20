@@ -6,6 +6,15 @@ Living document. Updated on release. See `CHANGELOG.md` for shipped work.
 
 Target: 2 weeks out. Covers ADR 0004 surfaces C1 and C2.
 
+- [ ] **Move off Node 20.** Node 20 reached end of life on 2026-04-30 and
+      receives no further security patches; a CVE disclosed against it now is
+      fixed in 22/24 and never backported. The repo pins it in three places
+      that must move together: `.tool-versions` (`nodejs 20.11.1`),
+      `engines.node` (`>=20.11.0`), and both `actions/setup-node` steps in
+      `.github/workflows/ci.yml` (`node-version: "20"`). Bump to the current
+      22 LTS and re-run the golden-proof job, which is the only place a
+      runtime change can silently alter committed artifacts.
+
 - [ ] OTel metrics: swap `src/metrics/counter.ts` for `@opentelemetry/api` Meter
 - [ ] Prometheus scrape endpoint on `runQueryLoop` output (optional, flag-gated)
 - [ ] `pino` structured logging, one JSONL line per decision / retry / hook outcome
@@ -23,7 +32,10 @@ Target: 4–6 weeks out.
 - [ ] Real pi.dev provider replacing `MockModelClient` in the golden path
 - [ ] Cost tracking — plumb `costTableVersion` into effect records
 - [ ] `PolicyEngine` rule inheritance — rules can extend other rules
-- [ ] Hook shell-contract executor (documented in HOOK-SECURITY, not yet wired)
+- [ ] Wire the hook shell-contract executor into the loop. The executor itself
+      ships (`src/hooks/shellHook.ts`, `shellHook.test.ts`); what is missing is
+      a path from a hook manifest to `makeShellHook`, and an export from
+      `src/index.ts` so embedders can reach it at all.
 
 ## Later — v0.4.0+ (parked)
 
