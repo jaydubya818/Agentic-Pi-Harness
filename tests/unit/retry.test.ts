@@ -17,6 +17,12 @@ describe("retry helpers", () => {
   it("classifies allowlisted model-open transport failures as retryable", () => {
     expect(classifyRetryableModelError(transientError("ECONNRESET"), { hasPersistedEvent: false })).toBe("model_open_transient");
     expect(classifyRetryableModelError({ status: 503 }, { hasPersistedEvent: false })).toBe("model_open_transient");
+    // 529 is the Anthropic overloaded_error; 408 is a server-side request timeout.
+    expect(classifyRetryableModelError({ status: 529 }, { hasPersistedEvent: false })).toBe("model_open_transient");
+    expect(classifyRetryableModelError({ status: 408 }, { hasPersistedEvent: false })).toBe("model_open_transient");
+    expect(classifyRetryableModelError({ code: "UND_ERR_BODY_TIMEOUT" }, { hasPersistedEvent: false })).toBe("model_open_transient");
+    // A 500 is not distinguishable from a deterministic rejection.
+    expect(classifyRetryableModelError({ status: 500 }, { hasPersistedEvent: false })).toBe("model_open_fail_closed");
   });
 
   it("fails closed once the current invocation has already persisted an event", () => {
