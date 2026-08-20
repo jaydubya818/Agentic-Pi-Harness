@@ -36,13 +36,23 @@ function isWithinPrefix(path: string, prefix: string): boolean {
   return normalizedPath === normalizedPrefix || normalizedPath.startsWith(normalizedPrefix + "/");
 }
 
+/**
+ * Collect every path a write targets. `path` and `paths` are unioned rather
+ * than checked in precedence order: a call carrying both had only `path`
+ * inspected, so `{ path: "sandbox/ok", paths: ["/etc/shadow"] }` slipped past
+ * both allowedWritePathPrefixes and maxWritePaths.
+ */
 function extractPaths(input: unknown): string[] {
-  if (input && typeof input === "object") {
-    const record = input as Record<string, unknown>;
-    if (typeof record.path === "string") return [record.path];
-    if (Array.isArray(record.paths)) return record.paths.filter((path): path is string => typeof path === "string");
+  if (!input || typeof input !== "object") return [];
+  const record = input as Record<string, unknown>;
+  const collected: string[] = [];
+  if (typeof record.path === "string") collected.push(record.path);
+  if (Array.isArray(record.paths)) {
+    for (const path of record.paths) {
+      if (typeof path === "string") collected.push(path);
+    }
   }
-  return [];
+  return [...new Set(collected)];
 }
 
 export function validateWorkerModeInputs(input: {

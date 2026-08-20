@@ -110,4 +110,38 @@ describe("policy evaluator fixtures", () => {
     expect(real.provenanceMode).toBe("real");
     expect(real.result).toBe("deny");
   });
+  it("evaluates every path when a call carries both `path` and `paths`", () => {
+    const policy = new PolicyEngine(PolicyDocSchema.parse({
+      schemaVersion: 1,
+      defaultAction: "approve",
+      rules: [
+        { id: "approve-tests", action: "approve", match: { pathPrefix: "tests" } },
+        { id: "deny-secrets", action: "deny", match: { pathPrefix: "secrets" } },
+      ],
+    }));
+
+    // `path` alone used to shadow `paths`, so the out-of-scope target never
+    // reached the deny rule.
+    expect(policy.decide({
+      toolCallId: "call_both_deny",
+      toolName: "write_file",
+      mode: "autonomous",
+      input: { path: "tests/a.ts", paths: ["secrets/key"] },
+    }).result).toBe("deny");
+
+    // An approve rule must still cover every unioned path.
+    expect(policy.decide({
+      toolCallId: "call_both_partial",
+      toolName: "write_file",
+      mode: "autonomous",
+      input: { path: "tests/a.ts", paths: ["docs/b.md"] },
+    }).winningRuleId).toBeNull();
+
+    expect(policy.decide({
+      toolCallId: "call_both_ok",
+      toolName: "write_file",
+      mode: "autonomous",
+      input: { path: "tests/a.ts", paths: ["tests/b.ts"] },
+    })).toMatchObject({ result: "approve", winningRuleId: "approve-tests" });
+  });
 });

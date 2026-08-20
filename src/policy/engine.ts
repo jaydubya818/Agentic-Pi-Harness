@@ -34,13 +34,24 @@ export interface DecisionInput {
   at?: string;
 }
 
+/**
+ * Collect every path a tool call targets. `path` and `paths` are unioned
+ * rather than checked in precedence order: a call that carries both
+ * (`{ path: "ok.txt", paths: ["secrets/key"] }`) used to have only `path`
+ * inspected, so the extra targets never reached a path-scoped deny rule and
+ * an approve rule covered them vacuously.
+ */
 function pathsOf(input: unknown): string[] {
-  if (input && typeof input === "object") {
-    const record = input as Record<string, unknown>;
-    if (typeof record.path === "string") return [record.path];
-    if (Array.isArray(record.paths)) return record.paths.filter((path): path is string => typeof path === "string");
+  if (!input || typeof input !== "object") return [];
+  const record = input as Record<string, unknown>;
+  const collected: string[] = [];
+  if (typeof record.path === "string") collected.push(record.path);
+  if (Array.isArray(record.paths)) {
+    for (const path of record.paths) {
+      if (typeof path === "string") collected.push(path);
+    }
   }
-  return [];
+  return [...new Set(collected)];
 }
 
 export function ruleMatches(rule: PolicyRule, input: DecisionInput): boolean {
