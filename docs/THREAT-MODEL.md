@@ -11,6 +11,7 @@
 5. **Harness ↔ Hooks.** In-process hooks are trusted (code-reviewed). Shell/HTTP hooks are untrusted external services.
 6. **Parent ↔ Sub-agent.** Parent trusts child's workdir is isolated (git worktree). Child cannot mutate parent state.
 7. **Harness ↔ Replay tapes.** Tapes from this machine are trust-on-first-use (hash chain); tapes from other sources are untrusted until `verify` passes.
+8. **Local network ↔ Hermes bridge.** The bridge is an HTTP control plane whose `/sessions` and `/execute` routes spawn worker processes with a caller-chosen workdir and environment. Binding loopback is a *reachability* control, not an authentication one: everything running as the same OS user — including a web page in the operator's browser — can reach it. Callers are authenticated by bearer token when one is configured, and by "must not look like a browser" always.
 
 ## Attack vectors
 
@@ -29,6 +30,11 @@
 | Budget bypass via sub-agent fanout | Budget escrow: parent debits on spawn, child credits back unused |
 | Forbidden path writes | Effect runtime enforces `maxBlastRadius` + forbidden glob list before every mutating tool |
 | Protected branch mutation | Pre-commit/pre-push git hooks installed in every worktree; re-checked at every PostToolUse |
+| Unauthenticated bridge exposed off-host | `start()` refuses a non-loopback bind with no `authToken`; a present-but-blank token is a misconfiguration and also refuses to start (it must never read as "auth disabled") |
+| Browser CSRF against the loopback bridge | A page on any origin can POST to `http://127.0.0.1:<port>` without a preflight. The bridge refuses every request carrying an `Origin` header — it is a machine-to-machine JSON API and has no browser clients |
+| DNS rebinding onto the loopback bridge | An attacker-controlled hostname re-pointed at `127.0.0.1` makes the browser treat the bridge as same-origin. The `Host` header must name a loopback address |
+| Bridge bearer token in `ps` output | `--auth-token` is visible to every local process; `PI_HERMES_BRIDGE_TOKEN` (or the LaunchAgent's `0600` token file) is the supported path. **Not yet enforced** |
+| Slowloris / socket exhaustion on the bridge | `headersTimeout` 15s, `requestTimeout` 30s, request bodies capped at 4 MiB |
 
 ## Non-goals for v0.1
 
@@ -46,3 +52,5 @@
 - [ ] Hash-chain tamper detection test passes
 - [ ] Approval nonce mismatch test passes
 - [ ] Worktree escape test passes (attempted traversal slug blocked)
+- [x] Bridge refuses a non-loopback bind without a token, and refuses a blank token
+- [x] Bridge rejects rebound `Host` headers and any request carrying `Origin`
