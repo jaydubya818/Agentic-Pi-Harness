@@ -23,6 +23,15 @@ describe("staged-secret guard (RISK-REGISTER R11)", () => {
     expect(scanContentForSecrets(`const t = "AKIA${"A".repeat(16)}";`)).toContain("aws access key id");
     expect(scanContentForSecrets(`token: "ghp_${"a".repeat(36)}"`)).toContain("github personal access token");
     expect(scanContentForSecrets('PI_HERMES_BRIDGE_TOKEN="s3cr3t-literal"')).toContain("hardcoded bridge auth token");
+    // Unquoted shell/.env assignment is the shape this token actually leaks in.
+    expect(scanContentForSecrets("export PI_HERMES_BRIDGE_TOKEN=deadbeefcafe1234")).toContain("hardcoded bridge auth token");
+    expect(scanContentForSecrets("PI_HERMES_BRIDGE_TOKEN: s3cr3t-literal")).toContain("hardcoded bridge auth token");
+    // GitHub's non-PAT token prefixes are just as usable as ghp_.
+    for (const prefix of ["gho_", "ghu_", "ghs_", "ghr_"]) {
+      expect(scanContentForSecrets(`token: "${prefix}${"a".repeat(36)}"`)).toContain("github oauth/app token");
+    }
+    expect(scanContentForSecrets(`_authToken=npm_${"a".repeat(36)}`)).toContain("npm access token");
+    expect(scanContentForSecrets(`key = "AIza${"a".repeat(35)}"`)).toContain("google api key");
   });
 
   it("exempts its own source and test from the content pass", () => {
@@ -41,6 +50,10 @@ describe("staged-secret guard (RISK-REGISTER R11)", () => {
       'prevHash: "' + "0".repeat(64) + '"',
       "const key = process.env.PI_HERMES_BRIDGE_TOKEN;",
       'PI_HERMES_BRIDGE_TOKEN="$BRIDGE_TOKEN"',
+      'PI_HERMES_BRIDGE_TOKEN=$BRIDGE_TOKEN',
+      'export PI_HERMES_BRIDGE_TOKEN="$(/bin/cat "$TOKEN_FILE")"',
+      "PI_HERMES_BRIDGE_TOKEN=",
+      "authToken: process.env.PI_HERMES_BRIDGE_TOKEN,",
       "export const SECRET_HEADER = 'Authorization';",
     ].join("\n");
     expect(scanContentForSecrets(noise)).toEqual([]);
