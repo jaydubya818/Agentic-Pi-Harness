@@ -256,6 +256,28 @@ export class HermesBridgeServer {
     }
   }
 
+  /**
+   * Loopback binding is not by itself a boundary against a web browser. Any
+   * page the operator visits can POST to http://127.0.0.1:<port>, and a
+   * hostname the attacker controls can be re-pointed at 127.0.0.1 (DNS
+   * rebinding) so the browser treats the bridge as same-origin. Either route
+   * reaches /sessions and /execute, which spawn worker processes -- and the
+   * default loopback configuration has no auth token to stop them.
+   *
+   * Two header checks close both: the Host header must name a loopback
+   * address (rebinding carries the attacker's hostname), and the request must
+   * carry no Origin header at all. Origin is browser-only and is attached to
+   * every cross-origin fetch/XHR/form post; the bridge is a machine-to-machine
+   * JSON API, so its legitimate callers (bridgeClient, curl, the CLIs) never
+   * send one and nothing is lost by refusing every request that does.
+   */
+  private isTrustedRequestOrigin(req: IncomingMessage): boolean {
+    const hostHeader = req.headers.host;
+    if (typeof hostHeader === "string" && !isLoopbackHost(headerHostname(hostHeader))) return false;
+    const origin = req.headers.origin;
+    return typeof origin !== "string" || origin === "";
+  }
+
   private isAuthorized(req: IncomingMessage): boolean {
     if (!this.authToken) return true;
     const header = req.headers.authorization;
@@ -270,6 +292,16 @@ export class HermesBridgeServer {
     const method = req.method ?? "GET";
     const url = new URL(req.url ?? "/", `http://${this.host}:${this.port}`);
     const path = url.pathname;
+
+    if (!this.isTrustedRequestOrigin(req)) {
+      this.logger.log("warn", "hermes.bridge.untrusted_origin", {
+        host: req.headers.host ?? null,
+        origin: req.headers.origin ?? null,
+        path,
+      });
+      json(res, 403, { error: "forbidden: request host or origin is not a local caller" });
+      return;
+    }
 
     if (method === "GET" && path === "/healthz") {
       json(res, 200, { ok: true });
@@ -1332,6 +1364,15 @@ function decodePathSegment(segment: string): string {
     return decodeURIComponent(segment);
   } catch {
     return segment;
+  }
+}
+
+/** Extract the hostname from a `Host:` header value, dropping any port. */
+function headerHostname(hostHeader: string): string {
+  try {
+    return new URL(`http://${hostHeader}`).hostname;
+  } catch {
+    return hostHeader;
   }
 }
 
