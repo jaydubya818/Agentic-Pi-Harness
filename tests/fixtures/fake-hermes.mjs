@@ -18,6 +18,24 @@ const noisy = query.includes("__NOISY__");
 const megaline = query.includes("__MEGALINE__");
 const decoySession = query.includes("__DECOY_SESSION__");
 
+/**
+ * Flush stdout/stderr before exiting.
+ *
+ * `process.exit()` abandons anything still queued on a pipe, so a worker that
+ * has just streamed a large backlog can lose its own result block. That is
+ * exactly the tail the adapter parses, so exiting without flushing makes the
+ * adapter tests fail intermittently under load.
+ */
+function exitAfterFlush(code) {
+  let pending = 2;
+  const done = () => {
+    pending -= 1;
+    if (pending === 0) process.exit(code);
+  };
+  process.stdout.write("", done);
+  process.stderr.write("", done);
+}
+
 async function finish(code = 0, error = null) {
   let artifacts = [];
   if (outputDir && !error) {
@@ -45,7 +63,7 @@ async function finish(code = 0, error = null) {
   }));
   console.log("PI_TASK_RESULT_JSON>>");
   console.error(`session_id: ${sessionId}`);
-  process.exit(code);
+  exitAfterFlush(code);
 }
 
 process.on("SIGINT", async () => {
