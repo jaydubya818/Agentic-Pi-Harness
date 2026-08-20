@@ -1,4 +1,5 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +19,18 @@ async function makeTempDir(prefix: string): Promise<string> {
 afterEach(async () => {
   await Promise.all(createdPaths.splice(0).reverse().map((path) => rm(path, { recursive: true, force: true })));
 });
+
+/** Issue a GET with caller-controlled headers that fetch() refuses to set (Host). */
+function rawGetStatus(port: number, path: string, headers: Record<string, string>): Promise<number> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    const req = httpRequest({ host: "127.0.0.1", port, path, method: "GET", headers }, (res) => {
+      res.resume();
+      res.on("end", () => resolvePromise(res.statusCode ?? 0));
+    });
+    req.on("error", rejectPromise);
+    req.end();
+  });
+}
 
 describe("HermesBridgeServer", () => {
   it("joins concurrent stop() calls instead of re-closing the server", async () => {
@@ -234,6 +247,49 @@ describe("HermesBridgeServer", () => {
     const listening = await authed.start();
     expect(listening.port).toBeGreaterThan(0);
     await authed.stop();
+  });
+
+  it("rejects rebound Host headers and cross-origin browser requests", async () => {
+    const stateRoot = await makeTempDir("pi-hermes-bridge-origin-state-");
+    const server = new HermesBridgeServer({
+      host: "127.0.0.1",
+      port: 0,
+      stateRoot,
+      enforceKnowledgePolicy: false,
+    });
+    const { port } = await server.start();
+    const base = `http://127.0.0.1:${port}`;
+    try {
+      // Baseline: a plain local caller sends no Origin and a loopback Host.
+      expect((await fetch(`${base}/healthz`)).status).toBe(200);
+
+      // DNS rebinding: the browser resolves attacker.example to 127.0.0.1 and
+      // sends the attacker's hostname in Host.
+      // fetch() refuses to set Host, so issue the request over raw http.
+      const rebound = await rawGetStatus(port, "/meta", { host: "attacker.example" });
+      expect(rebound).toBe(403);
+
+      // Browser CSRF: a page on another origin can POST without a preflight.
+      const crossOrigin = await fetch(`${base}/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "https://evil.example" },
+        body: JSON.stringify({ workdir: "/tmp" }),
+      });
+      expect(crossOrigin.status).toBe(403);
+
+      // A sandboxed/opaque origin is not a local caller either, and neither
+      // is a page served from loopback: Origin is browser-only, and the
+      // bridge has no browser clients.
+      for (const origin of ["null", "http://localhost:3000", base]) {
+        const rejected = await fetch(`${base}/meta`, { headers: { origin } });
+        expect(rejected.status).toBe(403);
+      }
+
+      // A local API caller (no Origin) still reaches authenticated routes.
+      expect((await fetch(`${base}/meta`)).status).toBe(200);
+    } finally {
+      await server.stop();
+    }
   });
 
   it("rejects malformed and oversized JSON bodies without a 500", async () => {
