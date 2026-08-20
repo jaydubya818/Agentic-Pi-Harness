@@ -35,9 +35,19 @@ const RETRYABLE_MODEL_CODES = new Set([
   // sockets under these codes rather than the libuv ones above.
   "UND_ERR_CONNECT_TIMEOUT",
   "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
   "UND_ERR_SOCKET",
 ]);
-const RETRYABLE_MODEL_STATUSES = new Set([429, 502, 503, 504]);
+/**
+ * 408 is the standard "the server gave up waiting for this request"; 529 is
+ * the Anthropic API's documented `overloaded_error`, which is the capacity
+ * signal a Claude-backed provider returns most often and is explicitly meant
+ * to be retried. Both previously classified as `model_open_fail_closed` and
+ * ended the run on the first occurrence. 500 stays out: it is not
+ * distinguishable from a deterministic server-side rejection, so retrying it
+ * risks replaying a request the provider has already refused on its merits.
+ */
+const RETRYABLE_MODEL_STATUSES = new Set([408, 429, 502, 503, 504, 529]);
 const PERSISTENCE_CODES = new Set(["E_TAPE_HASH", "E_CHECKPOINT_WRITE", "E_EFFECT_PRE_HASH", "E_EFFECT_CAPTURE"]);
 
 /**
