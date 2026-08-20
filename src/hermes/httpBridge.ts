@@ -77,6 +77,7 @@ export class HermesBridgeServer {
   private readonly host: string;
   private readonly port: number;
   private readonly authToken: string | null;
+  private readonly authTokenConfiguredBlank: boolean;
   readonly stateRoot: string;
   private readonly logger: Logger;
   private readonly adapter: HermesAdapter;
@@ -98,7 +99,15 @@ export class HermesBridgeServer {
   constructor(options: HermesBridgeServerOptions = {}) {
     this.host = options.host ?? "127.0.0.1";
     this.port = options.port ?? 8787;
-    this.authToken = options.authToken ?? null;
+    // A blank token is a misconfiguration, not "no auth". The LaunchAgent run
+    // script reads the token from a file and exports it unconditionally, so a
+    // truncated/empty token file (or `PI_HERMES_BRIDGE_TOKEN=`) used to hand
+    // the server an empty string, which every `!this.authToken` check read as
+    // "auth disabled" -- silently unauthenticating a bridge the operator
+    // believed was token-guarded. Reject it in start() instead; `undefined`
+    // still means the deliberate loopback-only, no-auth configuration.
+    this.authTokenConfiguredBlank = typeof options.authToken === "string" && options.authToken.trim() === "";
+    this.authToken = options.authToken && options.authToken.trim() !== "" ? options.authToken : null;
     this.stateRoot = resolve(options.stateRoot ?? join(homedir(), ".pi", "hermes-bridge-state"));
     this.logger = options.logger ?? new NoopLogger();
     this.adapter = options.adapter ?? new HermesAdapter(options.adapterOptions);
@@ -116,6 +125,13 @@ export class HermesBridgeServer {
     // caller-chosen workdir and environment. Exposing that beyond loopback
     // without bearer auth is unauthenticated remote command execution (the
     // dominant 2026 MCP-ecosystem CVE pattern), so fail closed at startup.
+    if (this.authTokenConfiguredBlank) {
+      throw new Error(
+        "refusing to start HermesBridgeServer with a blank auth token; "
+        + "unset authToken (CLI: --auth-token / PI_HERMES_BRIDGE_TOKEN) to run without auth, "
+        + "or supply a real token",
+      );
+    }
     if (!this.authToken && !isLoopbackHost(this.host)) {
       throw new Error(
         `refusing to bind HermesBridgeServer to non-loopback host ${this.host} without an auth token; `

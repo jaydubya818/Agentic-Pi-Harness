@@ -236,6 +236,13 @@ describe("HermesBridgeServer", () => {
       await local.stop();
     }
 
+    // A blank token is a misconfiguration (empty token file, exported-but-empty
+    // env var), not a request to run unauthenticated.
+    for (const authToken of ["", "   "]) {
+      const blank = new HermesBridgeServer({ host: "127.0.0.1", port: 0, stateRoot, authToken, enforceKnowledgePolicy: false });
+      await expect(blank.start()).rejects.toThrow(/blank auth token/);
+    }
+
     // A configured auth token unlocks non-loopback binds.
     const authed = new HermesBridgeServer({
       host: "0.0.0.0",

@@ -80,9 +80,13 @@ print(secrets.token_hex(24))
 PY
 }
 
+TOKEN=""
 if [[ -f "$TOKEN_FILE" ]]; then
   TOKEN="$(cat "$TOKEN_FILE")"
-else
+fi
+# A truncated or empty token file must not be reused: the run script exports
+# whatever it reads, and the bridge now refuses to start on a blank token.
+if [[ -z "${TOKEN//[[:space:]]/}" ]]; then
   TOKEN="$(generate_token)"
 fi
 
