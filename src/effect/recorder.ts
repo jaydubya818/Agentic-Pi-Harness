@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { EffectRecord, EffectRecordSchema, parseOrThrow } from "../schemas/index.js";
+import { compareCodeUnits } from "../schemas/canonical.js";
 import { PiHarnessError } from "../errors.js";
 
 /** Recorded when a path genuinely has no regular file at it. */
@@ -149,7 +150,7 @@ function lcsDiff(a: string[], b: string[]): DiffOp[] {
 type PreEntry = { hash: string; text: SnapshotText };
 
 function normalizePaths(paths: string[]): string[] {
-  return [...new Set(paths)].sort((a, b) => a.localeCompare(b));
+  return [...new Set(paths)].sort(compareCodeUnits);
 }
 
 /**

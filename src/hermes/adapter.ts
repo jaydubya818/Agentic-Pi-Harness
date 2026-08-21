@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import process from "node:process";
 import { z } from "zod";
 import { NoopLogger, type Logger } from "../obs/logger.js";
+import { compareCodeUnits } from "../schemas/canonical.js";
 import { safeWriteJson } from "../session/provenance.js";
 import {
   HermesArtifactSchema,
@@ -825,8 +826,11 @@ async function detectArtifacts(
       return;
     }
     // Deterministic traversal so the truncated set is stable across runs
-    // rather than whatever order the filesystem happened to return.
-    entries.sort((a, b) => a.name.localeCompare(b.name));
+    // rather than whatever order the filesystem happened to return. The
+    // comparator has to be a total order for that to hold: ICU collation
+    // reports distinct names as equal when they differ only by ignorable
+    // code points, which leaves the stable sort echoing readdir order.
+    entries.sort((a, b) => compareCodeUnits(a.name, b.name));
     for (const entry of entries) {
       if (artifacts.length >= limits.maxArtifacts) return;
       if (entry.name === ".pi-hermes") continue;
@@ -844,7 +848,7 @@ async function detectArtifacts(
 
   await walk(outputDir, 0);
 
-  return artifacts.sort((a, b) => a.path.localeCompare(b.path));
+  return artifacts.sort((a, b) => compareCodeUnits(a.path, b.path));
 }
 
 export const __adapterTestables = { detectArtifacts, stripAnsi, DEFAULT_ARTIFACT_SCAN_LIMITS };
