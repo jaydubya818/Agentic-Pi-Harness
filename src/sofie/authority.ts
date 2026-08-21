@@ -124,6 +124,10 @@ export function summarizeRoutineEvidence(context: SofieContext): string[] {
   if (context.targetRepo) {
     details.push(`target=${context.targetRepo.name}`);
   }
+  const failedGates = failedAcceptanceGateNames(context);
+  if (failedGates.length) {
+    details.push(`acceptanceGateFailed=${failedGates.join(",")}`);
+  }
   return details;
 }
 
@@ -160,6 +164,28 @@ export function detectDestructiveActionOutsidePolicy(context: SofieContext): boo
   return deniedDestructiveByEvidence
     || destructivePathWrite
     || hasAny(questionText, ["delete repo", "wipe", "drop database", "push to production", "rotate secrets"]);
+}
+
+/**
+ * Code-checked acceptance gate. `cli/validate-target.ts` actually runs the
+ * target's install/lint/build commands and records each outcome, so a `false`
+ * here is a deterministic fact rather than a judgement call. No verdict may
+ * report success over one: a recorded gate failure outranks every other
+ * "looks fine" signal in the context.
+ */
+export function detectFailedAcceptanceGate(context: SofieContext): boolean {
+  const summary = context.targetSummary;
+  if (!summary) return false;
+  return [summary.installOk, summary.lintOk, summary.buildOk].some((value) => value === false);
+}
+
+/** Names of the code-checked gates that ran and failed, in command order. */
+export function failedAcceptanceGateNames(context: SofieContext): string[] {
+  const summary = context.targetSummary;
+  if (!summary) return [];
+  return ([["install", summary.installOk], ["lint", summary.lintOk], ["build", summary.buildOk]] as const)
+    .filter(([, ok]) => ok === false)
+    .map(([name]) => name);
 }
 
 export function detectInsufficientEvidence(context: SofieContext): boolean {
@@ -220,7 +246,10 @@ export function answerRoutineQuestion(context: SofieContext): SofieAnswer {
 
   const wroteFiles = (context.effects?.length ?? 0) > 0;
   const denied = (context.decisions ?? []).some((decision) => decision.result === "deny");
-  const summary = context.kind === "closure"
+  const acceptanceGateFailed = detectFailedAcceptanceGate(context);
+  const summary = acceptanceGateFailed
+    ? `Sofie withholds approval: code-checked validation failed (${failedAcceptanceGateNames(context).join(", ")}).`
+    : context.kind === "closure"
     ? wroteFiles || context.targetSummary ? "Sofie recommends bounded closure based on recorded evidence." : "Sofie sees no closure signals."
     : context.kind === "review"
       ? denied
@@ -235,10 +264,14 @@ export function answerRoutineQuestion(context: SofieContext): SofieAnswer {
   return {
     actor: "sofie",
     kind: context.kind,
-    verdict: denied ? "caution" : "answer",
+    verdict: acceptanceGateFailed || denied ? "caution" : "answer",
     summary,
     details,
-    closureRecommendation: context.kind === "closure" ? "complete" : "continue",
+    // A failed code-checked gate blocks closure outright; the agent does not
+    // get to certify "done" over a build the harness itself watched fail.
+    closureRecommendation: acceptanceGateFailed
+      ? "needs-human"
+      : context.kind === "closure" ? "complete" : "continue",
     scopeDriftDetected,
     escalation,
   };
