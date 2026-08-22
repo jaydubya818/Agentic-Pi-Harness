@@ -1,10 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ApprovalDecision } from "../approvals/runtime.js";
-import { readEffectLog } from "../effect/recorder.js";
-import { readPolicyLog } from "../policy/decision.js";
+import { readEffectLogLenient } from "../effect/recorder.js";
+import { readPolicyLogLenient } from "../policy/decision.js";
 import { readProvenance } from "../session/provenance.js";
-import { EffectRecord, PolicyDecision } from "../schemas/index.js";
 import { SofieAnswer, SofieContext, SofieToolEvidence, answerRoutineQuestion, makeApprovalSummaries } from "./authority.js";
 
 export interface SofieSessionArtifacts {
@@ -27,22 +26,6 @@ async function tryReadJson<T>(path: string): Promise<T | null> {
   }
 }
 
-async function tryReadEffects(path: string): Promise<EffectRecord[]> {
-  try {
-    return await readEffectLog(path);
-  } catch {
-    return [];
-  }
-}
-
-async function tryReadPolicy(path: string): Promise<PolicyDecision[]> {
-  try {
-    return await readPolicyLog(path);
-  } catch {
-    return [];
-  }
-}
-
 export async function buildSofieContextFromSession(input: SofieSessionArtifacts, question: string, kind: SofieContext["kind"]): Promise<SofieContext> {
   const sessionDir = join(input.outRoot, "sessions", input.sessionId);
   const effectsPath = join(input.outRoot, "effects", `${input.sessionId}.jsonl`);
@@ -50,9 +33,9 @@ export async function buildSofieContextFromSession(input: SofieSessionArtifacts,
   const provenancePath = join(sessionDir, "provenance.json");
   const checkpointPath = join(sessionDir, "checkpoint.json");
 
-  const [effects, decisions, checkpoint, provenance] = await Promise.all([
-    tryReadEffects(effectsPath),
-    tryReadPolicy(policyPath),
+  const [effectLog, policyLog, checkpoint, provenance] = await Promise.all([
+    readEffectLogLenient(effectsPath),
+    readPolicyLogLenient(policyPath),
     tryReadJson<{ stopReason?: string | null }>(checkpointPath),
     readProvenance(provenancePath).catch(() => null),
   ]);
@@ -63,8 +46,8 @@ export async function buildSofieContextFromSession(input: SofieSessionArtifacts,
     question,
     kind,
     tapeEventTypes: input.tapeEventTypes,
-    effects,
-    decisions,
+    effects: effectLog.records,
+    decisions: policyLog.decisions,
     toolEvidence: input.toolEvidence,
     approvals: makeApprovalSummaries(input.approvals ?? []),
     provenance: provenance
@@ -79,6 +62,11 @@ export async function buildSofieContextFromSession(input: SofieSessionArtifacts,
     frictionFindings: [
       ...(input.frictionFindings ?? []),
       ...(checkpoint?.stopReason ? [`stopReason=${checkpoint.stopReason}`] : []),
+      // Damaged evidence is itself a finding: the surviving decisions still
+      // count, but the operator has to know some were unreadable rather than
+      // reading a short log as a quiet one.
+      ...(policyLog.skippedLines > 0 ? [`policyLogUnparsedLines=${policyLog.skippedLines}`] : []),
+      ...(effectLog.skippedLines > 0 ? [`effectLogUnparsedLines=${effectLog.skippedLines}`] : []),
     ],
     targetRepo: input.targetRepo,
     targetSummary: input.targetSummary,
