@@ -352,7 +352,9 @@ export class HermesBridgeServer {
       // close) had to read the state root off disk. Mirrors GET /runs,
       // including ?limit=N to tail the most recent.
       const limit = parseLimitParam(url);
-      // Map insertion order is creation order (restored sessions first).
+      // Map insertion order is creation order (restored sessions first,
+      // themselves restored in persisted created_at order rather than in
+      // readdir order, so a post-restart tail is still the newest N).
       const items = Array.from(this.sessions.values());
       json(res, 200, {
         count: items.length,
@@ -531,7 +533,11 @@ export class HermesBridgeServer {
       // disk. Summaries only (no events or envelopes) keep the payload
       // small on a long-lived bridge; ?limit=N tails the most recent.
       const limit = parseLimitParam(url);
-      // Map insertion order is acceptance order (restored runs first).
+      // Map insertion order is acceptance order for runs this process
+      // accepted. Restored runs come first, ordered by their session's
+      // created_at then execution_id -- a persisted run carries no
+      // acceptance timestamp, so that is a stable proxy, not true
+      // acceptance order, for two runs sharing one session.
       const items = Array.from(this.runs.values()).map((run) => serializeRunSummary(run));
       json(res, 200, {
         count: items.length,

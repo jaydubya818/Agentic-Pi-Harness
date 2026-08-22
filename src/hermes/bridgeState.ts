@@ -1,5 +1,6 @@
 import { appendFile, mkdir, open, readdir, readFile, type FileHandle } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { compareCodeUnits } from "../schemas/canonical.js";
 import { safeWriteJson } from "../session/provenance.js";
 import {
   HermesSessionSchema,
@@ -175,7 +176,15 @@ export class HermesBridgeStateStore {
         // skip invalid persisted session state
       }
     }
-    return sessions;
+    // `readdir` order is filesystem-defined, so restoring in it made the
+    // rebuilt Map's insertion order arbitrary -- and both `GET /sessions` and
+    // `GET /runs` document their `?limit=N` as tailing the *most recent*
+    // records by leaning on that insertion order. After a restart the tail
+    // was therefore an arbitrary N, not the newest N. `created_at` is
+    // persisted on every session, so restore in creation order; session_id
+    // breaks ties so the result is total.
+    return sessions.sort((a, b) =>
+      compareCodeUnits(a.created_at, b.created_at) || compareCodeUnits(a.session_id, b.session_id));
   }
 
   private async loadRuns(): Promise<BridgeStateRunRecord[]> {
@@ -192,7 +201,16 @@ export class HermesBridgeStateStore {
         // skip invalid persisted run state
       }
     }
-    return runs;
+    // Same `readdir` problem as loadSessions. A run record carries no
+    // acceptance timestamp of its own, so true acceptance order cannot be
+    // recovered from disk; the best available proxy is the owning session's
+    // created_at, with execution_id as a total tie-break. That is not
+    // guaranteed to be acceptance order for two runs on one session, but it
+    // is at least identical on every host and across every restart, which
+    // arbitrary readdir order was not.
+    return runs.sort((a, b) =>
+      compareCodeUnits(a.session.created_at, b.session.created_at)
+      || compareCodeUnits(a.accepted.execution_id, b.accepted.execution_id));
   }
 
   private async loadRunEvents(executionId: string): Promise<BridgeEventRecord[]> {

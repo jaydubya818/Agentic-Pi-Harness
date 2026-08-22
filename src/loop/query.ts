@@ -1,7 +1,7 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { ModelClient } from "../adapter/pi-adapter.js";
-import { Checkpoint, EffectRecord, PolicyDecision, StreamEvent } from "../schemas/index.js";
+import { Checkpoint, EffectRecord, PolicyDecision, SanitizationRecord, StreamEvent } from "../schemas/index.js";
 import { ReplayRecorder } from "../replay/recorder.js";
 import { appendEffectRecord, EffectRecorder } from "../effect/recorder.js";
 import { dispatchPostToolHooks, dispatchPreToolHooks, mergeHookDeniedDecision, RegisteredToolHook } from "../hooks/mediation.js";
@@ -75,6 +75,14 @@ export interface LoopResult {
   compactions: CompactionRecord[];
   approvalPackets: ApprovalPacket[];
   approvalDecisions: ApprovalDecision[];
+  /**
+   * One record per sanitized tool output, in emission order. Sanitization is
+   * a lossy hop -- it escapes tags, strips control bytes, and truncates at
+   * 64KiB -- and the wrapped string on the tape only hints at that in prose.
+   * Carrying the typed record keeps the loss measurable by a consumer instead
+   * of requiring it to regex-scrape the payload for "[...truncated".
+   */
+  sanitizations: SanitizationRecord[];
   sofieAnswer: SofieAnswer | null;
   counters: Record<string, number>;
   cost: CostRecord | null;
@@ -251,6 +259,7 @@ async function executeApprovedTool(
   mode: LoopMode,
   counters: CountersSink,
   effects: EffectRecord[],
+  sanitizations: SanitizationRecord[],
   event: ToolUseEvent,
 ): Promise<StreamEvent> {
   const tool = inp.tools[event.name];
@@ -314,11 +323,13 @@ async function executeApprovedTool(
     }
   }
 
-  const { wrapped } = wrapToolOutput(rawOutput, {
+  const { wrapped, sanitization } = wrapToolOutput(rawOutput, {
     toolName: event.name,
     toolCallId: event.id,
     maxBytes: 64 * 1024,
   });
+  sanitizations.push(sanitization);
+  for (const rewrite of sanitization.rewrites) counters.inc(`sanitize.${rewrite}`);
 
   return {
     type: "tool_result",
@@ -337,6 +348,7 @@ async function prepareToolDispatch(
   decisions: PolicyDecision[],
   approvalPackets: ApprovalPacket[],
   approvalDecisions: ApprovalDecision[],
+  sanitizations: SanitizationRecord[],
   event: ToolUseEvent,
   order: number,
 ): Promise<PreparedToolDispatch> {
@@ -437,7 +449,7 @@ async function prepareToolDispatch(
       id: event.id,
       name: event.name,
       order,
-      run: () => executeApprovedTool(inp, mode, counters, effects, event),
+      run: () => executeApprovedTool(inp, mode, counters, effects, sanitizations, event),
     },
   };
 }
@@ -467,13 +479,14 @@ async function flushPendingToolUses(
   decisions: PolicyDecision[],
   approvalPackets: ApprovalPacket[],
   approvalDecisions: ApprovalDecision[],
+  sanitizations: SanitizationRecord[],
   pendingToolUses: ToolUseEvent[],
 ): Promise<void> {
   if (pendingToolUses.length === 0) return;
 
   const prepared: PreparedToolDispatch[] = [];
   for (let index = 0; index < pendingToolUses.length; index++) {
-    prepared.push(await prepareToolDispatch(inp, mode, counters, effects, decisions, approvalPackets, approvalDecisions, pendingToolUses[index], index));
+    prepared.push(await prepareToolDispatch(inp, mode, counters, effects, decisions, approvalPackets, approvalDecisions, sanitizations, pendingToolUses[index], index));
   }
 
   const scheduled = prepared
@@ -528,6 +541,7 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
   const decisions: PolicyDecision[] = [];
   const approvalPackets: ApprovalPacket[] = [];
   const approvalDecisions: ApprovalDecision[] = [];
+  const sanitizations: SanitizationRecord[] = [];
   const pendingToolUses: ToolUseEvent[] = [];
   let messageCount = 0;
   let stopReason: string | null = null;
@@ -592,7 +606,7 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
       }
 
       if (next.done) {
-        await flushPendingToolUses(inp, mode, counters, events, effects, decisions, approvalPackets, approvalDecisions, pendingToolUses);
+        await flushPendingToolUses(inp, mode, counters, events, effects, decisions, approvalPackets, approvalDecisions, sanitizations, pendingToolUses);
         completed = true;
         if (retried) counters.inc("retry.succeeded");
         break;
@@ -606,7 +620,7 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
         continue;
       }
 
-      await flushPendingToolUses(inp, mode, counters, events, effects, decisions, approvalPackets, approvalDecisions, pendingToolUses);
+      await flushPendingToolUses(inp, mode, counters, events, effects, decisions, approvalPackets, approvalDecisions, sanitizations, pendingToolUses);
       const nonTool = await emitNonToolEvent(inp, counters, events, event);
       currentInvocationPersistedEvent = true;
       if (nonTool.messageStarted) {
@@ -683,6 +697,7 @@ export async function runQueryLoop(inp: LoopInputs): Promise<LoopResult> {
     compactions,
     approvalPackets,
     approvalDecisions,
+    sanitizations,
     sofieAnswer,
     counters: counters.snapshot(),
     cost,
