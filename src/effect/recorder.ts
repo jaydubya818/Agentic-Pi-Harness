@@ -276,6 +276,53 @@ export async function readEffectLog(path: string): Promise<EffectRecord[]> {
   });
 }
 
+export interface LenientEffectLog {
+  records: EffectRecord[];
+  /** Lines that were present but did not parse as an EffectRecord. */
+  skippedLines: number;
+}
+
+function parseEffectLogLine(line: string): EffectRecord | null {
+  let json: unknown;
+  try {
+    json = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const parsed = EffectRecordSchema.safeParse(json);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * Best-effort counterpart to `readEffectLog`, for callers that read the log
+ * as *evidence* rather than as a contract to verify. See
+ * `readPolicyLogLenient` for the full rationale: `readEffectLog` rejects the
+ * whole file on one unparseable line, which is correct for `what-changed`
+ * and `verify` but turns a crash-torn trailing line into "this session
+ * touched nothing" for anyone asking what was written.
+ *
+ * A missing file is absence of evidence, not corruption: zero records, zero
+ * skipped lines.
+ */
+export async function readEffectLogLenient(path: string): Promise<LenientEffectLog> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch {
+    return { records: [], skippedLines: 0 };
+  }
+
+  const records: EffectRecord[] = [];
+  let skippedLines = 0;
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    const record = parseEffectLogLine(line);
+    if (record) records.push(record);
+    else skippedLines++;
+  }
+  return { records, skippedLines };
+}
+
 export function renderWhatChanged(records: EffectRecord[]): string {
   const out: string[] = [];
   for (const rec of records) {

@@ -154,3 +154,50 @@ describe("sofie runtime: a damaged policy log", () => {
     expect(answer.summary).toContain("bounded concerns");
   });
 });
+
+describe("sofie runtime: a damaged effect log", () => {
+  const DAMAGED_ID = "sofie-rt-eff-torn";
+  let outRoot: string;
+
+  function destructiveEffect() {
+    // A write into .git is what detectDestructiveActionOutsidePolicy escalates on.
+    return { ...effectRecord(), paths: [".git/config"], postHashes: { ".git/config": "sha256:abc" } };
+  }
+
+  beforeAll(async () => {
+    outRoot = await mkdtemp(join(tmpdir(), "pi-sofie-eff-torn-"));
+    const sessionDir = join(outRoot, "sessions", DAMAGED_ID);
+    await mkdir(sessionDir, { recursive: true });
+    await mkdir(join(outRoot, "effects"), { recursive: true });
+    await writeFile(
+      join(outRoot, "effects", `${DAMAGED_ID}.jsonl`),
+      JSON.stringify(destructiveEffect()) + "\n" + '{"schemaVersion":1,"toolCallId":"t2","too',
+    );
+    // A real run records a decision per tool call, so the insufficient-evidence
+    // guard does not fire and mask the dropped effect.
+    await writeFile(join(sessionDir, "policy.jsonl"), JSON.stringify(policyDecision()) + "\n");
+  });
+
+  afterAll(async () => {
+    await rm(outRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it("keeps the effects that did parse and flags the ones that did not", async () => {
+    const context = await buildSofieContextFromSession({ sessionId: DAMAGED_ID, outRoot }, "Is this run complete?", "closure");
+
+    expect(context.effects?.map((effect) => effect.paths)).toEqual([[".git/config"]]);
+    expect(context.frictionFindings).toContain("effectLogUnparsedLines=1");
+  });
+
+  it("still escalates the destructive write instead of recommending closure", async () => {
+    // Regression: readEffectLog rejects the entire file on one bad line, and
+    // Sofie's catch turned that into zero effects, so the .git write that
+    // drives destructive_outside_policy disappeared and the run was certified
+    // complete.
+    const answer = await answerSofieSessionQuestion({ sessionId: DAMAGED_ID, outRoot }, "Is this run complete?", "closure");
+
+    expect(answer.verdict).toBe("escalate");
+    expect(answer.escalation.reason).toBe("destructive_outside_policy");
+    expect(answer.closureRecommendation).toBe("needs-human");
+  });
+});
