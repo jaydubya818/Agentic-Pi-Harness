@@ -27,7 +27,7 @@ describe("effect recorder", () => {
     const record = await recorder.capturePost("session-1", "tool-1", "write_file", [a, b]);
 
     expect(record.sessionId).toBe("session-1");
-    expect(record.paths).toEqual([b, a].sort((x, y) => x.localeCompare(y)));
+    expect(record.paths).toEqual([b, a].sort());
     expect(record.preHashes[b]).toMatch(/^sha256:/);
     expect(record.postHashes[b]).toMatch(/^sha256:/);
     expect(record.unifiedDiff).toContain("--- a/");

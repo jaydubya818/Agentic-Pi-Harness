@@ -33,6 +33,15 @@ Each schema lives in `src/schemas/<name>.ts` and is re-exported from `src/schema
 > committed `goldens/canonical/` digests are unchanged. No persisted-schema
 > surface changed, so no `schemaVersion` bump is required.
 
+> **0.70.3 note (canonical helpers):** `canonical.ts` gained `compareCodeUnits`,
+> the ordering primitive documented under "Ordering rule for sorted fields"
+> below. It replaces `localeCompare` in the effect recorder and the Hermes
+> artifact scan. No persisted-schema surface changed and no field was added or
+> removed, so no `schemaVersion` bump is required. `EffectRecord.paths` and the
+> artifact list may now be emitted in a different order than a pre-0.70.3 build
+> produced for the same inputs; committed `goldens/canonical/` digests are
+> unchanged.
+
 ### Session / provenance / checkpoint
 - `sessionContext.ts` — persisted session-level identity and runtime context shape
 - `provenanceManifest.ts` — session start manifest written for the canonical run
@@ -158,6 +167,27 @@ Implementation lives in:
 Tier A depends on canonical hashing for:
 - replay tape hash-chain verification
 - stable digest generation used by persisted session artifacts
+
+### Ordering rule for sorted fields
+
+Any list that is persisted into an artifact and is expected to be stable
+across runs and across hosts must be sorted with `compareCodeUnits` from
+`src/schemas/canonical.ts` (UTF-16 code unit order — the same total order
+`Array#sort` applies with no comparator).
+
+`String.prototype.localeCompare` must not be used for this. It is not a total
+order over distinct strings: code points that ICU treats as ignorable at
+primary strength (U+00AD, U+200B, …) make two different names compare equal,
+and because `Array.prototype.sort` is stable those elements then retain their
+input order — which for a directory scan is `readdir` order. Its result is
+also a function of the ICU data the Node binary was built against
+(full-icu / small-icu / system-icu, plus ICU version), so two hosts can order
+one file set two different ways.
+
+Current call sites: `normalizePaths` in `src/effect/recorder.ts` (the
+`EffectRecord.paths` list and the `unifiedDiff` concatenation order) and
+`detectArtifacts` in `src/hermes/adapter.ts` (traversal order, which under
+`maxArtifacts` truncation determines which artifacts are recorded at all).
 
 ## Schema-drift guard
 

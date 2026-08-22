@@ -68,6 +68,48 @@ describe("Sofie authority", () => {
     expect(escalation.reason).toBe("destructive_outside_policy");
   });
 
+  it("refuses to certify completion over a failed code-checked gate", () => {
+    const answer = answerRoutineQuestion({
+      sessionId: "s1",
+      mode: "assist",
+      question: "Is the bounded task ready to close?",
+      kind: "closure",
+      targetSummary: { installOk: true, lintOk: false, buildOk: false, notes: ["npm run build failed"] },
+    });
+
+    expect(answer.closureRecommendation).toBe("needs-human");
+    expect(answer.verdict).toBe("caution");
+    expect(answer.details).toContain("acceptanceGateFailed=lint,build");
+  });
+
+  it("does not report a passing review when validation commands failed", () => {
+    const answer = answerRoutineQuestion({
+      sessionId: "s1",
+      mode: "assist",
+      question: "Review bounded validation status for demo-app",
+      kind: "review",
+      targetRepo: { name: "demo-app", path: "/tmp/demo-app" },
+      targetSummary: { installOk: true, lintOk: true, buildOk: false },
+    });
+
+    expect(answer.verdict).toBe("caution");
+    expect(answer.summary).not.toContain("passes");
+    expect(answer.summary).toContain("build");
+  });
+
+  it("still certifies closure when every recorded gate passed", () => {
+    const answer = answerRoutineQuestion({
+      sessionId: "s1",
+      mode: "assist",
+      question: "Is the bounded task ready to close?",
+      kind: "closure",
+      targetSummary: { installOk: true, lintOk: true, buildOk: true },
+    });
+
+    expect(answer.closureRecommendation).toBe("complete");
+    expect(answer.verdict).toBe("answer");
+  });
+
   it("detects scope drift for frozen and out-of-scope areas", () => {
     expect(detectScopeDrift({
       sessionId: "s1",

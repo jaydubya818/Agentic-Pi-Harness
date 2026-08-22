@@ -13,7 +13,13 @@ async function makeTempDir(prefix: string): Promise<string> {
 }
 
 afterEach(async () => {
-  await Promise.all(createdPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  // `force` only swallows ENOENT. On APFS a recursive rm of a directory the
+  // test just wrote thousands of records into intermittently fails with
+  // ENOTEMPTY -- the unlinks land, the rmdir races the directory-entry
+  // update -- which failed this file roughly one run in three. Retries make
+  // the teardown wait for the filesystem to settle instead.
+  await Promise.all(createdPaths.splice(0).map((path) =>
+    rm(path, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })));
 });
 
 describe("HermesBridgeStateStore", () => {
@@ -79,7 +85,12 @@ describe("HermesBridgeStateStore", () => {
     const all = await store.loadPreflightDenials();
     expect(all).toHaveLength(total);
     expect(all[0].code).toBe("denial-0");
-  });
+    // 2000 sequential appends is ~5s of real fs work on a loaded machine,
+    // which sits right on vitest's 5s default and tips over under load. The
+    // record count is load-bearing (the log has to outgrow the 64 KiB tail
+    // window for the seek path to be exercised at all), so raise the budget
+    // rather than shrink what the test covers.
+  }, 60_000);
 
   it("tails a denial log smaller than one read window", async () => {
     const root = await makeTempDir("pi-bridge-state-denial-small-");
