@@ -109,3 +109,48 @@ describe("sofie runtime: buildSofieContextFromSession", () => {
     expect(answer.closureRecommendation).toBe("needs-human");
   });
 });
+
+describe("sofie runtime: a damaged policy log", () => {
+  const DAMAGED_ID = "sofie-rt-torn";
+  let outRoot: string;
+
+  function denyDecision() {
+    return { ...policyDecision(), toolCallId: "t-deny", result: "deny", winningRuleId: "deny-secrets" };
+  }
+
+  beforeAll(async () => {
+    outRoot = await mkdtemp(join(tmpdir(), "pi-sofie-torn-"));
+    const sessionDir = join(outRoot, "sessions", DAMAGED_ID);
+    await mkdir(sessionDir, { recursive: true });
+    await mkdir(join(outRoot, "effects"), { recursive: true });
+    // A normal run: the loop wrote a file and policy recorded a deny, then the
+    // process died mid-append and left a partial JSON line with no newline.
+    await writeFile(join(outRoot, "effects", `${DAMAGED_ID}.jsonl`), JSON.stringify(effectRecord()) + "\n");
+    await writeFile(
+      join(sessionDir, "policy.jsonl"),
+      JSON.stringify(denyDecision()) + "\n" + '{"schemaVersion":1,"toolCallId":"t2","res',
+    );
+  });
+
+  afterAll(async () => {
+    await rm(outRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it("keeps the decisions that did parse instead of dropping the whole log", async () => {
+    const context = await buildSofieContextFromSession({ sessionId: DAMAGED_ID, outRoot }, "Does this pass?", "review");
+
+    expect(context.decisions?.map((decision) => decision.result)).toEqual(["deny"]);
+    expect(context.frictionFindings).toContain("policyLogUnparsedLines=1");
+  });
+
+  it("still reports the recorded deny rather than certifying a clean review", async () => {
+    // Regression: readPolicyLog rejects the entire file on one bad line, and
+    // Sofie's catch turned that into zero decisions. With effects present the
+    // insufficient-evidence guard does not fire, so a single torn byte range
+    // flipped the verdict from "caution" to "review passes".
+    const answer = await answerSofieSessionQuestion({ sessionId: DAMAGED_ID, outRoot }, "Does this pass?", "review");
+
+    expect(answer.verdict).toBe("caution");
+    expect(answer.summary).toContain("bounded concerns");
+  });
+});
