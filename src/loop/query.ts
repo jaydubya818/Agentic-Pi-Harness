@@ -259,7 +259,7 @@ async function executeApprovedTool(
   mode: LoopMode,
   counters: CountersSink,
   effects: EffectRecord[],
-  sanitizations: SanitizationRecord[],
+  sanitizations: Map<string, SanitizationRecord>,
   event: ToolUseEvent,
 ): Promise<StreamEvent> {
   const tool = inp.tools[event.name];
@@ -328,7 +328,10 @@ async function executeApprovedTool(
     toolCallId: event.id,
     maxBytes: 64 * 1024,
   });
-  sanitizations.push(sanitization);
+  // Keyed, not appended: this function is a `scheduledCall.run()` body, so for
+  // a readonly group it executes concurrently and returns in completion order.
+  // `flushPendingToolUses` drains the map in plan order.
+  sanitizations.set(event.id, sanitization);
   for (const rewrite of sanitization.rewrites) counters.inc(`sanitize.${rewrite}`);
 
   return {
@@ -348,7 +351,7 @@ async function prepareToolDispatch(
   decisions: PolicyDecision[],
   approvalPackets: ApprovalPacket[],
   approvalDecisions: ApprovalDecision[],
-  sanitizations: SanitizationRecord[],
+  sanitizations: Map<string, SanitizationRecord>,
   event: ToolUseEvent,
   order: number,
 ): Promise<PreparedToolDispatch> {
@@ -484,9 +487,10 @@ async function flushPendingToolUses(
 ): Promise<void> {
   if (pendingToolUses.length === 0) return;
 
+  const sanitizedByToolCallId = new Map<string, SanitizationRecord>();
   const prepared: PreparedToolDispatch[] = [];
   for (let index = 0; index < pendingToolUses.length; index++) {
-    prepared.push(await prepareToolDispatch(inp, mode, counters, effects, decisions, approvalPackets, approvalDecisions, sanitizations, pendingToolUses[index], index));
+    prepared.push(await prepareToolDispatch(inp, mode, counters, effects, decisions, approvalPackets, approvalDecisions, sanitizedByToolCallId, pendingToolUses[index], index));
   }
 
   const scheduled = prepared
@@ -519,6 +523,10 @@ async function flushPendingToolUses(
         toolName: entry.toolEvent.name,
       });
     }
+    // Collated here with the visible results, off the same `prepared` order, so
+    // the record array matches the tape rather than the I/O completion race.
+    const sanitization = sanitizedByToolCallId.get(entry.toolEvent.id);
+    if (sanitization) sanitizations.push(sanitization);
     await emitEvent(inp.tape, counters, events, inp.sessionId, inp.tracePath, toolResult);
   }
 
