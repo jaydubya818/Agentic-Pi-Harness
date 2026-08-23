@@ -69,6 +69,12 @@ describe("query loop scheduling", () => {
     expect((result.events[3] as Extract<StreamEvent, { type: "tool_result" }>).id).toBe("r1");
     expect((result.events[4] as Extract<StreamEvent, { type: "tool_result" }>).id).toBe("r2");
     expect(finishes).not.toEqual(["r1", "r2"]);
+    // `executeApprovedTool` records the SanitizationRecord from inside the
+    // scheduled call, so with r2 finishing first the records are produced in
+    // the order r2, r1. They must still be collated onto plan order, like the
+    // visible tool_result events above -- otherwise every sibling record array
+    // in LoopResult is deterministic and this one silently is not.
+    expect(result.sanitizations.map((record) => record.toolCallId)).toEqual(["r1", "r2"]);
     expect(result.effects).toHaveLength(0);
     expect(result.decisions).toHaveLength(2);
     expect(await readPolicyLog(policyLogPath)).toHaveLength(2);
@@ -126,6 +132,7 @@ describe("query loop scheduling", () => {
     });
 
     expect(executionLog).toEqual(["v1", "bash", "v2"]);
+    expect(result.sanitizations.map((record) => record.toolCallId)).toEqual(["w1", "x1", "w2"]);
     expect(result.effects).toHaveLength(2);
     expect(result.effects[0].toolCallId).toBe("w1");
     expect(result.effects[1].toolCallId).toBe("w2");
