@@ -7,8 +7,20 @@
  * who doesn't want OTel has to pay for it.
  */
 
+import { compareCodeUnits } from "../schemas/canonical.js";
+
 export interface CountersSink {
   inc(key: string, by?: number): void;
+  /**
+   * Keys must come back in a total, build-independent order. `run.ts` writes
+   * this straight to `sessions/<id>/metrics.json` via `safeWriteJson`, which
+   * is `JSON.stringify` -- it preserves whatever order the object carries. A
+   * `Map` in first-increment order is *not* deterministic: `tool.error` and
+   * `sanitize.*` are incremented from inside `executeApprovedTool`, which runs
+   * concurrently under `runWithFanoutLimit` for a readonly group, so which key
+   * is touched first is decided by I/O completion. Two runs with identical
+   * counter values then produce byte-different artifacts.
+   */
   snapshot(): Record<string, number>;
 }
 
@@ -16,7 +28,16 @@ export interface CountersSink {
 export class Counters implements CountersSink {
   private c = new Map<string, number>();
   inc(key: string, by = 1): void { this.c.set(key, (this.c.get(key) ?? 0) + by); }
-  snapshot(): Record<string, number> { return Object.fromEntries(this.c); }
+  snapshot(): Record<string, number> { return sortedSnapshot(this.c); }
+}
+
+/**
+ * `compareCodeUnits` rather than `localeCompare`, for the reasons spelled out
+ * at its definition in `src/schemas/canonical.ts`: ICU collation is neither
+ * antisymmetric over distinct strings nor stable across Node builds.
+ */
+function sortedSnapshot(counts: Map<string, number>): Record<string, number> {
+  return Object.fromEntries([...counts.entries()].sort((a, b) => compareCodeUnits(a[0], b[0])));
 }
 
 /**
