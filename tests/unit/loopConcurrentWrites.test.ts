@@ -66,3 +66,69 @@ describe("loop: per-call EffectScope isolates same-path concurrent writes", () =
     expect(await readFile(target, "utf8")).toBe("v2\n");
   });
 });
+
+/**
+ * The loop's pre-snapshot path extraction used to read `path` *or* `paths`,
+ * so a mutating call carrying both snapshotted only `path`. capturePost then
+ * had no pre-entry for the extra target and recorded it as `absent` -- an
+ * effect record claiming an existing file did not exist -- with no diff and
+ * `binaryChanged: true` for a plain text file.
+ */
+describe("loop: pre-snapshot covers `path` and `paths` together", () => {
+  it("records the real pre-hash and a diff for a target that only appears in `paths`", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-pp-"));
+    const viaPath = join(dir, "a.txt");
+    const viaPaths = join(dir, "b.txt");
+    await writeFile(viaPath, "a0\n");
+    await writeFile(viaPaths, "b0\n");
+
+    const script: StreamEvent[] = [
+      { type: "message_start", schemaVersion: 1 },
+      {
+        type: "tool_use",
+        schemaVersion: 1,
+        id: "w1",
+        name: "write_file",
+        input: { path: viaPath, paths: [viaPaths], content: "new\n" },
+      },
+      { type: "message_stop", schemaVersion: 1, stopReason: "end_turn" },
+    ];
+
+    const tape = new ReplayRecorder(join(dir, "tape.jsonl"));
+    await tape.writeHeader({ sessionId: "s", loopGitSha: "g", policyDigest: "sha256:0", costTableVersion: "v1" });
+
+    const result = await runQueryLoop({
+      sessionId: "s",
+      model: new MockModelClient(script),
+      tape,
+      effects: new EffectRecorder(),
+      checkpointPath: join(dir, "cp.json"),
+      effectLogPath: join(dir, "e.jsonl"),
+      policyLogPath: join(dir, "p.jsonl"),
+      concurrency: new ConcurrencyClassifier([{ name: "write_file", class: "serial" }]),
+      tools: {
+        write_file: async (i: { path: string; paths: string[]; content: string }) => {
+          await writeFile(i.path, i.content);
+          for (const extra of i.paths) await writeFile(extra, i.content);
+          return { output: "ok", paths: [i.path, ...i.paths] };
+        },
+      },
+    });
+
+    expect(result.effects).toHaveLength(1);
+    const [record] = result.effects;
+
+    // Both targets existed before the call, so neither pre-hash may be the
+    // "nothing was here" sentinel.
+    expect(record.preHashes[viaPath]).toMatch(/^sha256:/);
+    expect(record.preHashes[viaPaths]).toMatch(/^sha256:/);
+    expect(record.preHashes[viaPaths]).not.toBe("absent");
+
+    // Two text files were overwritten; nothing binary happened, and the
+    // `paths`-only target must carry a real diff of its old content.
+    expect(record.binaryChanged).toBe(false);
+    expect(record.unifiedDiff).toContain(`--- a/${viaPaths}`);
+    expect(record.unifiedDiff).toContain("-b0");
+    expect(record.unifiedDiff).toContain("+new");
+  });
+});
