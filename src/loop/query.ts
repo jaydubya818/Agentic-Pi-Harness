@@ -95,13 +95,35 @@ interface PreparedToolDispatch {
   scheduledCall?: ScheduledCall<StreamEvent>;
 }
 
+/**
+ * Collect every path a mutating tool call targets, for the pre-snapshot that
+ * `capturePost` later diffs against. `path` and `paths` are unioned rather
+ * than checked in precedence order -- the same union `pathsOf`
+ * (policy/engine.ts) and the worker-mode write controls
+ * (runtime/workerControls.ts) already apply.
+ *
+ * This copy was the one still returning early on `path`, so a call carrying
+ * both (`{ path: "a", paths: ["b"] }`) snapshotted only `a`. `capturePost`
+ * then walked the tool-reported path list, found no pre-entry for `b`, and
+ * fell back to its `absent` sentinel: the effect record asserted that a file
+ * which existed with content did not exist before the call, and -- because an
+ * absent entry carries no text to diff against -- reported the overwrite as
+ * `binaryChanged` with no unified diff. Both claims are false, and the effect
+ * log is what `what-changed`, `verify`, and Sofie's
+ * `detectDestructiveActionOutsidePolicy` read as evidence of what a session
+ * touched.
+ */
 function extractPaths(input: unknown): string[] {
-  if (input && typeof input === "object") {
-    const record = input as Record<string, unknown>;
-    if (typeof record.path === "string") return [record.path];
-    if (Array.isArray(record.paths)) return record.paths.filter((path): path is string => typeof path === "string");
+  if (!input || typeof input !== "object") return [];
+  const record = input as Record<string, unknown>;
+  const collected: string[] = [];
+  if (typeof record.path === "string") collected.push(record.path);
+  if (Array.isArray(record.paths)) {
+    for (const path of record.paths) {
+      if (typeof path === "string") collected.push(path);
+    }
   }
-  return [];
+  return [...new Set(collected)];
 }
 
 function isMutatingTool(toolName: string): boolean {
