@@ -7,7 +7,7 @@ import { createGoldenPathMockModelClient } from "../adapter/pi-adapter.js";
 import { ReplayRecorder } from "../replay/recorder.js";
 import { EffectRecorder } from "../effect/recorder.js";
 import { runQueryLoop } from "../loop/query.js";
-import { writeSessionStartProvenance, digestPolicy, safeWriteJson } from "../session/provenance.js";
+import { writeSessionStartProvenance, digestPolicy, safeWriteCanonicalJson } from "../session/provenance.js";
 /**
  * Golden-path runner: drives the loop with a scripted mock model that
  * reads tests/math.test.ts and then writes a patched version.
@@ -121,7 +121,7 @@ export async function runGoldenPath(workdir: string, outRoot: string, opts: RunO
       },
     });
 
-    await safeWriteJson(join(sessionDir, "metrics.json"), result.counters);
+    await safeWriteCanonicalJson(join(sessionDir, "metrics.json"), result.counters);
     return sessionId;
   } finally {
     await tape.close();

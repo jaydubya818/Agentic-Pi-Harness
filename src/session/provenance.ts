@@ -23,6 +23,17 @@ export async function safeWriteJson(path: string, value: unknown): Promise<void>
 }
 
 /**
+ * Canonical sibling of `safeWriteJson`, for artifacts whose bytes must not
+ * depend on key insertion order. `Counters.snapshot()` returns
+ * `Object.fromEntries` of a `Map`, so its key order is first-increment
+ * order: under plain `JSON.stringify` two runs with identical counters
+ * incremented in different orders produce byte-different files.
+ */
+export async function safeWriteCanonicalJson(path: string, value: unknown): Promise<void> {
+  await safeWriteFileAtomic(path, canonicalize(value) + "\n");
+}
+
+/**
  * Shared write-to-tmp + fsync + rename + fsync(dir) primitive behind every
  * crash-safe persisted record. The tmp name is unique per write: with a
  * fixed `path + ".tmp"`, two concurrent writers to the same path truncate
