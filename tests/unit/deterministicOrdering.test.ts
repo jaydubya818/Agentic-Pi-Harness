@@ -3,6 +3,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compareCodeUnits } from "../../src/schemas/canonical.js";
+import { Counters } from "../../src/metrics/counter.js";
 import { EffectRecorder } from "../../src/effect/recorder.js";
 import { __adapterTestables } from "../../src/hermes/adapter.js";
 
@@ -89,5 +90,42 @@ describe("artifact scan ordering", () => {
     const names = artifacts.map((a) => a.path.split("/").pop()!);
     expect(names).toEqual([...names].sort());
     expect(names).toEqual([PLAIN_NAME, SOFT_HYPHEN_NAME]);
+  });
+});
+
+describe("counter snapshot ordering", () => {
+  // `src/cli/run.ts` writes `result.counters` straight to metrics.json via
+  // safeWriteJson (JSON.stringify), which preserves key order. Two runs that
+  // increment the same keys in a different order must still produce the same
+  // bytes -- and the order *is* different between runs, because `tool.error`
+  // and `sanitize.*` are incremented from inside a concurrently scheduled
+  // readonly group.
+  it("does not depend on first-increment order", () => {
+    const first = new Counters();
+    first.inc("tool.read.ok");
+    first.inc("tool.write.ok");
+    first.inc("policy.allow", 2);
+
+    const second = new Counters();
+    second.inc("policy.allow", 2);
+    second.inc("tool.write.ok");
+    second.inc("tool.read.ok");
+
+    expect(Object.keys(second.snapshot())).toEqual(Object.keys(first.snapshot()));
+    expect(JSON.stringify(second.snapshot(), null, 2)).toBe(JSON.stringify(first.snapshot(), null, 2));
+  });
+
+  it("uses code unit order, not collation order", () => {
+    const counters = new Counters();
+    counters.inc("alpha");
+    counters.inc("Zeta");
+    expect(Object.keys(counters.snapshot())).toEqual(["Zeta", "alpha"]);
+  });
+
+  it("orders keys that ICU collation cannot distinguish", () => {
+    const counters = new Counters();
+    counters.inc(SOFT_HYPHEN_NAME);
+    counters.inc(PLAIN_NAME);
+    expect(Object.keys(counters.snapshot())).toEqual([PLAIN_NAME, SOFT_HYPHEN_NAME]);
   });
 });

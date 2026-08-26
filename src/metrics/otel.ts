@@ -14,6 +14,7 @@
  */
 
 import type { CountersSink } from "./counter.js";
+import { compareCodeUnits } from "../schemas/canonical.js";
 import { PiHarnessError } from "../errors.js";
 
 export async function createOtelCounters(meterName = "agentic-pi-harness"): Promise<CountersSink> {
@@ -47,7 +48,8 @@ export async function createOtelCounters(meterName = "agentic-pi-harness"): Prom
       local.set(key, (local.get(key) ?? 0) + by);
     },
     snapshot(): Record<string, number> {
-      return Object.fromEntries(local);
+      // Same total key order the in-memory sink promises; see CountersSink.
+      return Object.fromEntries([...local.entries()].sort((a, b) => compareCodeUnits(a[0], b[0])));
     },
   };
 }
