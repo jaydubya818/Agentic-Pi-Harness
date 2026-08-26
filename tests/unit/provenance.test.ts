@@ -5,8 +5,10 @@ import { join } from "node:path";
 import {
   createProvenanceManifest,
   readProvenance,
+  safeWriteCanonicalJson,
   writeSessionStartProvenance,
 } from "../../src/session/provenance.js";
+import { Counters } from "../../src/metrics/counter.js";
 import { PiHarnessError } from "../../src/errors.js";
 
 describe("provenance", () => {
@@ -73,5 +75,35 @@ describe("provenance", () => {
       name: "PiHarnessError",
       code: "E_SCHEMA_PARSE",
     });
+  });
+});
+
+describe("safeWriteCanonicalJson", () => {
+  it("writes byte-identical metrics for counters incremented in different orders", async () => {
+    const first = new Counters();
+    first.inc("tool.write_file");
+    first.inc("turns", 3);
+    first.inc("adapter.stream_event", 12);
+
+    const second = new Counters();
+    second.inc("adapter.stream_event", 12);
+    second.inc("turns", 3);
+    second.inc("tool.write_file");
+
+    expect(second.snapshot()).toEqual(first.snapshot());
+
+    const dir = await mkdtemp(join(tmpdir(), "pi-metrics-canonical-"));
+    const firstPath = join(dir, "metrics-first.json");
+    const secondPath = join(dir, "metrics-second.json");
+
+    await safeWriteCanonicalJson(firstPath, first.snapshot());
+    await safeWriteCanonicalJson(secondPath, second.snapshot());
+
+    const firstBytes = await readFile(firstPath);
+    const secondBytes = await readFile(secondPath);
+    expect(firstBytes.equals(secondBytes)).toBe(true);
+    expect(firstBytes.toString("utf8")).toBe(
+      '{"adapter.stream_event":12,"tool.write_file":1,"turns":3}\n',
+    );
   });
 });
