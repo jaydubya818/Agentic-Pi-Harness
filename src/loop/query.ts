@@ -4,7 +4,7 @@ import { ModelClient } from "../adapter/pi-adapter.js";
 import { Checkpoint, EffectRecord, PolicyDecision, SanitizationRecord, StreamEvent } from "../schemas/index.js";
 import { ReplayRecorder } from "../replay/recorder.js";
 import { appendEffectRecord, EffectRecorder } from "../effect/recorder.js";
-import { dispatchPostToolHooks, dispatchPreToolHooks, mergeHookDeniedDecision, RegisteredToolHook } from "../hooks/mediation.js";
+import { dispatchPostToolHooks, dispatchPreToolHooks, mergeHookDeniedDecision, RegisteredToolHook, ToolHookRunSummary } from "../hooks/mediation.js";
 import { appendPolicyDecision, decidePolicy, PolicyDecider, PolicyMode } from "../policy/decision.js";
 import {
   classifyRetryableModelError,
@@ -276,6 +276,36 @@ function unknownToolResult(event: ToolUseEvent): StreamEvent {
   };
 }
 
+/**
+ * Count every hook run by phase and outcome.
+ *
+ * A hook that times out, throws, or returns a malformed response is not a
+ * policy decision -- `docs/HOOK-SECURITY.md` item 7 is explicit that the
+ * session continues, and that fail-open is deliberate. But it does mean a
+ * configured gate did not answer, and both dispatchers' `summaries` were
+ * discarded at every call site, so nothing recorded that anywhere.
+ *
+ * The artifact consequence is the problem: a `PreToolUse` hook that crashed
+ * left `policy.jsonl` holding `result: "approve"` with `hookDecision: null`,
+ * which is byte-identical to the record written when the hook ran and
+ * allowed the call. A reader auditing the session -- `inspect`, Sofie's
+ * evidence pass, or a human -- could not tell "the gate passed" from "the
+ * gate never ran". That is the same fail-open-into-clean-evidence shape as
+ * the torn policy/effect log reads fixed on 2026-08-22.
+ *
+ * Counters are the sink because they already reach a durable artifact
+ * (`metrics.json`) and because `CountersSink` is the one channel the loop
+ * already threads through both dispatch sites. Additive only: a run that
+ * configures no hooks emits no `hook.*` keys, so no existing artifact
+ * changes bytes and the canonical golden digest is untouched.
+ */
+function recordHookRunSummaries(counters: CountersSink, summaries: ToolHookRunSummary[]): void {
+  for (const summary of summaries) {
+    const phase = summary.event === "PreToolUse" ? "pre" : "post";
+    counters.inc(`hook.${phase}.${summary.status}`);
+  }
+}
+
 async function executeApprovedTool(
   inp: LoopInputs,
   mode: LoopMode,
@@ -304,7 +334,7 @@ async function executeApprovedTool(
     }
 
     if (inp.hooks?.length) {
-      await dispatchPostToolHooks(inp.hooks, {
+      const postHook = await dispatchPostToolHooks(inp.hooks, {
         event: "PostToolUse",
         sessionId: inp.sessionId,
         turnIndex: 0,
@@ -317,6 +347,7 @@ async function executeApprovedTool(
           paths: result.paths,
         },
       });
+      recordHookRunSummaries(counters, postHook.summaries);
     }
   } catch (error) {
     isError = true;
@@ -329,7 +360,7 @@ async function executeApprovedTool(
       inp.effects.discard(event.id);
     }
     if (inp.hooks?.length) {
-      await dispatchPostToolHooks(inp.hooks, {
+      const postHook = await dispatchPostToolHooks(inp.hooks, {
         event: "PostToolUse",
         sessionId: inp.sessionId,
         turnIndex: 0,
@@ -342,6 +373,7 @@ async function executeApprovedTool(
           paths: [],
         },
       });
+      recordHookRunSummaries(counters, postHook.summaries);
     }
   }
 
@@ -405,6 +437,7 @@ async function prepareToolDispatch(
         },
       },
     });
+    recordHookRunSummaries(counters, preHook.summaries);
     if (preHook.deniedBy) {
       decision = mergeHookDeniedDecision(baseDecision, preHook.deniedBy);
     }
