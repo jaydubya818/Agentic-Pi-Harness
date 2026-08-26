@@ -2,12 +2,23 @@ import { posix } from "node:path";
 import { z } from "zod";
 import { PolicyDecision } from "../schemas/index.js";
 
+/**
+ * Every policy schema is `.strict()`: an unknown key is a load-time error,
+ * not a silently stripped one. Zod's default `strip` mode turned a typo in a
+ * hand-authored policy file into a *widening* of the rule it appears in,
+ * because `ruleMatches` treats an empty `match` as "matches everything".
+ * `{ action: "approve", match: { toolName: "read_file" } }` stripped to
+ * `match: {}` and approved every tool call the document saw, and
+ * `{ pathprefix: "tests/" }` dropped the path scope off an approve rule
+ * while leaving the rule itself in force. A policy document is an authority
+ * grant, so an unrecognised key must fail closed rather than widen it.
+ */
 export const PolicyMatchSchema = z.object({
   tool: z.string().min(1).optional(),
   mode: z.enum(["plan", "assist", "autonomous", "worker", "dry-run"]).optional(),
   path: z.string().min(1).optional(),
   pathPrefix: z.string().min(1).optional(),
-}).partial();
+}).partial().strict();
 export type PolicyMatch = z.infer<typeof PolicyMatchSchema>;
 
 export const PolicyRuleSchema = z.object({
@@ -15,14 +26,14 @@ export const PolicyRuleSchema = z.object({
   action: z.enum(["approve", "deny", "ask"]),
   match: PolicyMatchSchema.default({}),
   reason: z.string().optional(),
-});
+}).strict();
 export type PolicyRule = z.infer<typeof PolicyRuleSchema>;
 
 export const PolicyDocSchema = z.object({
   schemaVersion: z.literal(1),
   defaultAction: z.enum(["approve", "deny", "ask"]),
   rules: z.array(PolicyRuleSchema),
-});
+}).strict();
 export type PolicyDoc = z.infer<typeof PolicyDocSchema>;
 
 export interface DecisionInput {

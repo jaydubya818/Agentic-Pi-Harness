@@ -144,4 +144,38 @@ describe("policy evaluator fixtures", () => {
       input: { path: "tests/a.ts", paths: ["tests/b.ts"] },
     })).toMatchObject({ result: "approve", winningRuleId: "approve-tests" });
   });
+
+  it("rejects an unknown key in a rule match instead of widening the rule", () => {
+    // A stripped `match` is an empty `match`, and an empty `match` matches
+    // every call -- so a typo'd scope key used to turn a narrow approve rule
+    // into a blanket one rather than failing the load.
+    const typoedScope = {
+      schemaVersion: 1,
+      defaultAction: "deny",
+      rules: [{ id: "allow-tests-write", action: "approve", match: { tool: "write_file", pathprefix: "tests/" } }],
+    };
+    expect(() => PolicyDocSchema.parse(typoedScope)).toThrow();
+
+    const typoedTool = {
+      schemaVersion: 1,
+      defaultAction: "deny",
+      rules: [{ id: "allow-read", action: "approve", match: { toolName: "read_file" } }],
+    };
+    expect(() => PolicyDocSchema.parse(typoedTool)).toThrow();
+  });
+
+  it("rejects unknown keys on the rule and document level", () => {
+    expect(() => PolicyDocSchema.parse({
+      schemaVersion: 1,
+      defaultAction: "deny",
+      rules: [{ id: "allow-read", action: "approve", match: { tool: "read_file" }, actions: "approve" }],
+    })).toThrow();
+
+    expect(() => PolicyDocSchema.parse({
+      schemaVersion: 1,
+      defaultAction: "deny",
+      rules: [],
+      defaultActions: "approve",
+    })).toThrow();
+  });
 });
