@@ -4,10 +4,18 @@ import { PiHarnessError } from "../errors.js";
 
 /**
  * Level-B replay determinism: compare a recorded effect log against a fresh
- * run's effect log. Two logs are "effect-equivalent" iff they produce the
- * same (path, postHash) set for every mutating tool call, ignoring timestamps
- * and diff text (which may vary if the file was pre-existing with different
- * newlines, etc.).
+ * run's effect log. Two logs are "effect-equivalent" iff they end in the same
+ * (path, postHash) state, ignoring timestamps and diff text (which may vary if
+ * the file was pre-existing with different newlines, etc.).
+ *
+ * The comparison is over FINAL per-path state, not per tool call: `postSet`
+ * folds every `EffectRecord` in a log into one `Map` keyed by path, so the
+ * last write to a path overwrites every earlier one. A replay that skipped an
+ * intermediate mutating call but reproduced the final content of every path it
+ * touched is therefore reported as `ok: true`. Asserting per-call determinism
+ * would mean keying by (toolCallId, path), which is a stronger replay contract
+ * than `docs/REPLAY-MODEL.md` specifies; see `docs/NIGHTLY-BACKLOG.md`
+ * (2026-08-27) before changing it.
  */
 
 export interface EffectDrift {
