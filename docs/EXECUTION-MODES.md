@@ -1,5 +1,28 @@
 # Execution Modes
 
+> **Implementation status (2026-08-28).** This document is largely design
+> intent stated in the present indicative, and the enforced parts were not
+> previously distinguished from the aspirational ones. Grepping `src` for
+> everything that branches on the loop mode returns exactly three sites:
+>
+> - `match.mode` in `ruleMatches` (`src/policy/engine.ts`) — mode is a policy
+>   match axis, so a rule may be scoped to a mode. Real.
+> - `validateWorkerModeInputs` (`src/runtime/workerControls.ts`) — `worker`
+>   only: refuses to start on an unsigned policy and refuses an interactive
+>   approval requester. Real.
+> - `evaluateWorkerToolUse` (same file) — `worker` only: denies exclusive-class
+>   tools unless `allowExclusiveTools`, and enforces `maxWritePaths` /
+>   `allowedWritePathPrefixes` on `write_file`. Real.
+>
+> Everything else below is caller convention, not a control the harness
+> applies: the per-mode policy defaults, the per-mode retry configs, the
+> per-mode hook tiers (see the equivalent note in `HOOK-SECURITY.md`), and the
+> sub-agent rules. `runQueryLoop` takes `tools`, `policy`, `retry`, and
+> `hooks` as caller-supplied inputs and does not vary any of them by mode.
+> Sections below are annotated where the text describes something that is
+> **not enforced**; do not treat an unenforced row of the matrix as a
+> boundary.
+
 Every session runs in exactly one of five modes. Mode is set at session start and never changes mid-session. Mode influences policy evaluation (it's one of the match axes in `PolicyEngine`), hook trust tiers (`HOOK-SECURITY.md`), and what the loop is allowed to do when a tool is denied.
 
 ## plan
@@ -50,8 +73,22 @@ Every session runs in exactly one of five modes. Mode is set at session start an
 - **Intent.** Rehearse a session against a replay tape or mock model without any side effects.
 - **Policy default.** whatever the underlying config says — decisions are still recorded.
 - **Hooks.** `module` only; `exec`/`http` fail closed (same reason as worker: we don't want a "dry run" to page an on-call).
-- **Tools.** All tool implementations are swapped for pure-read stubs. Writes are simulated; the effect recorder still captures would-be diffs but `rollbackConfidence` is always `"best_effort"`.
+- **Tools.** All tool implementations are swapped for pure-read stubs. Writes are simulated; the effect recorder still captures would-be diffs.
 - **Typical use.** Policy change regression tests, replay-drift CI, capacity planning.
+
+> **Not enforced, and `dry-run` is inert.** The string `"dry-run"` appears in
+> `src` only inside the `LoopMode` unions and the zod enums that mirror them:
+> no code branches on it. Nothing swaps `LoopInputs.tools` for stubs, so a
+> caller that selects `mode: "dry-run"` and passes its real `write_file`
+> implementation gets real writes and a real effect log. Simulated writes are
+> the caller's job today.
+>
+> This bullet also promised `rollbackConfidence: "best_effort"` on the effect
+> record. There is no such field: `EffectRecordSchema`
+> (`src/schemas/effectRecord.ts`) does not declare one, `capturePost` does not
+> produce one, and `appendEffectRecord` writes through `safeParse`, which
+> would strip it. It has been removed from the sentence rather than qualified
+> — there was nothing to qualify.
 
 ## Mode compatibility matrix
 
@@ -63,3 +100,14 @@ Every session runs in exactly one of five modes. Mode is set at session start an
 | shell hooks allowed  |  ✓   |   ✓    |  ✓   |   -    |    -    |
 | sub-agents allowed   |  ✓   |   ✓    |  ✓   |   ✓    |    ✓    |
 | effect log required  |  -   |   -    |  ✓   |   ✓    |    -    |
+
+> **Only the `signed policy req` row is enforced**, by
+> `validateWorkerModeInputs`. Two other rows are not what they look like:
+>
+> - `writes allowed` is not checked against the mode anywhere. A write is
+>   allowed or denied by the policy document, the hooks, and — in `worker`
+>   only — the worker controls. A `plan`-mode session with an approving
+>   policy writes files.
+> - `effect log required` is stronger than the table says and is not
+>   mode-scoped: `LoopInputs.effectLogPath` is a non-optional `string` for
+>   every mode, so the loop always has somewhere to write effect records.
