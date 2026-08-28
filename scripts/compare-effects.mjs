@@ -27,8 +27,16 @@ const b = parse(bPath);
 /**
  * Determinism check: two independent runs in two different workdirs will
  * naturally key postHashes under different absolute paths, so we compare
- * the SORTED hash values per record (path-agnostic) plus the tool name +
- * binaryChanged + rollbackConfidence flags.
+ * the SORTED hash values per record (path-agnostic) plus the tool name and
+ * the binaryChanged flag.
+ *
+ * This used to also read `r.rollbackConfidence`. There is no such field:
+ * `EffectRecordSchema` does not declare one, `capturePost` does not produce
+ * one, and `appendEffectRecord` writes through `safeParse`, which would
+ * strip it if a caller added one. `JSON.stringify` drops `undefined`
+ * members, so the key was absent from both signatures and contributed
+ * nothing to the comparison while making this docstring claim a rollback
+ * dimension the check does not have.
  */
 const sig = (recs) =>
   recs.map((r) => JSON.stringify({
@@ -36,7 +44,6 @@ const sig = (recs) =>
     h: Object.values(r.postHashes).sort(),
     p: Object.values(r.preHashes).sort(),
     b: r.binaryChanged,
-    rc: r.rollbackConfidence,
   })).join("|");
 
 if (a.length !== b.length) {
