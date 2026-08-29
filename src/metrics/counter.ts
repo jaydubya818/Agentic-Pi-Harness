@@ -47,13 +47,33 @@ function sortedSnapshot(counts: Map<string, number>): Record<string, number> {
  */
 export class FanOutCounters implements CountersSink {
   constructor(private sinks: CountersSink[]) {}
+  /**
+   * Not isolated: the sinks are incremented in registration order with no
+   * per-sink guard, so a sink that throws both starves every sink after it
+   * and propagates out of `counters.inc(...)` in the loop. `emitEvent`
+   * increments *after* `tape.writeEvent`, so a throwing exporter unwinds
+   * `runQueryLoop` with events already durable on the tape and no
+   * `checkpoint.json` / `metrics.json` written — the run degrades to the
+   * documented crash case over an observability failure. Reproduced with a
+   * one-line sink whose `inc` throws. Whether a metrics sink is allowed to
+   * fail a governed run is a contract decision, not a patch; see
+   * `docs/NIGHTLY-BACKLOG.md` (2026-08-29).
+   */
   inc(key: string, by = 1): void { for (const s of this.sinks) s.inc(key, by); }
   snapshot(): Record<string, number> {
-    // Snapshot from the first in-memory sink if available, else empty.
+    // Returns the first sink whose snapshot is non-empty -- not, as this
+    // comment used to claim, "the first in-memory sink". Nothing here
+    // inspects a sink's implementation. The distinction is normally moot
+    // because `inc` fans every increment to every sink, so all of them carry
+    // identical keys and values; it matters only for a forward-only sink
+    // that reports `{}` from its own `snapshot()`, which is exactly the case
+    // this loop exists to skip over.
     for (const s of this.sinks) {
       const snap = s.snapshot();
       if (Object.keys(snap).length > 0) return snap;
     }
+    // Every sink was empty (or there are none): fall back to sink 0's empty
+    // snapshot so the key ordering contract still comes from a real sink.
     return this.sinks[0]?.snapshot() ?? {};
   }
 }
