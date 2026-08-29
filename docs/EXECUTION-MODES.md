@@ -10,9 +10,27 @@
 > - `validateWorkerModeInputs` (`src/runtime/workerControls.ts`) — `worker`
 >   only: refuses to start on an unsigned policy and refuses an interactive
 >   approval requester. Real.
-> - `evaluateWorkerToolUse` (same file) — `worker` only: denies exclusive-class
->   tools unless `allowExclusiveTools`, and enforces `maxWritePaths` /
->   `allowedWritePathPrefixes` on `write_file`. Real.
+> - `evaluateWorkerToolUse` (same file) — `worker` only: enforces
+>   `maxWritePaths` / `allowedWritePathPrefixes` on `write_file`. Real. It
+>   also denies exclusive-class tools unless `allowExclusiveTools`, but that
+>   half is **conditional, and inert by default** — see the correction below.
+>
+> **Correction (2026-08-29) to the bullet above.** The exclusive-tool denial
+> fires only when the caller *also* passes a `ConcurrencyClassifier` via
+> `LoopInputs.concurrency` that classifies the tool as `exclusive`.
+> `evaluateWorkerToolUse` does not classify anything itself; it branches on a
+> `toolClass` its caller computes. `prepareToolDispatch`
+> (`src/loop/query.ts`) falls back to `new ConcurrencyClassifier([])` when
+> `concurrency` is absent, and `ConcurrencyClassifier.classify` returns
+> `"serial"` for every unregistered name — so with no tool manifest *no tool
+> is ever `exclusive`* and the control never denies anything. A worker
+> session that sets `allowExclusiveTools: false` and omits `concurrency`
+> gets no enforcement and no error. Reproduced through `runQueryLoop`: the
+> same worker session running a `deploy` tool is `policy=approve` and
+> executes with no classifier, and `policy=deny` /
+> `workerControl:exclusiveDenied` with one. Tracked in
+> `NIGHTLY-BACKLOG.md` (2026-08-29); do not read this row as a boundary
+> unless the tool manifest is wired.
 >
 > Everything else below is caller convention, not a control the harness
 > applies: the per-mode policy defaults, the per-mode retry configs, the
