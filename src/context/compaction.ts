@@ -56,7 +56,21 @@ export function compactHistory(events: StreamEvent[], opts: CompactOptions): { e
     return { events, record: null };
   }
 
-  const segments = selectCompactableSegments(events);
+  // Only replace a body the placeholder is actually smaller than.
+  // `compactToolResultOutput` is a fixed ~40-byte string, so swapping it in
+  // for a short tool_result ("ok", an exit code, an empty diff) makes the
+  // history *bigger*. A turn whose budget was blown by text_delta events but
+  // whose tool results are all small therefore came back with
+  // `bytesAfter > bytesBefore` while still reporting a compaction record and
+  // incrementing `compaction.applied` -- the loop recorded, as evidence, that
+  // it had compacted a history it had in fact grown.
+  //
+  // Filtered here rather than in `selectCompactableSegments`, which answers
+  // the different question "which events are tool_result bodies" and is used
+  // on its own.
+  const segments = selectCompactableSegments(events).filter(
+    (segment) => Buffer.byteLength(compactToolResultOutput(segment.toolCallId, segment.bytes), "utf8") < segment.bytes,
+  );
   if (segments.length === 0) {
     return { events, record: null };
   }

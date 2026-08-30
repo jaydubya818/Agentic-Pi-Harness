@@ -30,6 +30,44 @@ export interface ApprovalRequester {
   request(packet: ApprovalPacket, signal: AbortSignal): Promise<ApprovalResponse>;
 }
 
+/**
+ * `ApprovalRequester` is a caller-supplied channel, so what it resolves with
+ * is not guaranteed by anything the harness controls -- a TypeScript
+ * interface does not constrain a JS consumer, an out-of-process approver, or
+ * an `async` function that forgets to return.
+ *
+ * Reading `.outcome` off whatever came back had two failure modes, and
+ * neither matched the fail-closed contract this module states for a broken
+ * approval channel:
+ *
+ *   - resolving `undefined`/`null` threw a TypeError *out of*
+ *     `requestApprovalDecision`. Its one caller (`prepareToolDispatch` in
+ *     `src/loop/query.ts`) does not guard the call, so a requester that
+ *     returned nothing aborted the whole run -- the exact outcome the
+ *     "requester failed" catch below exists to prevent.
+ *   - resolving anything else (a bare string, `{}`) produced
+ *     `outcome: undefined` on the `ApprovalDecision`. That value is outside
+ *     the declared `"approve" | "deny" | "timeout"` union, is persisted as
+ *     the approval evidence for the call, and reaches
+ *     `counters.inc("approval." + outcome)`, writing an `approval.undefined`
+ *     key into `metrics.json`.
+ *
+ * Deny is the right answer for both: an approval that cannot be read is not
+ * an approval.
+ */
+function isApprovalResponse(value: unknown): value is ApprovalResponse {
+  if (!value || typeof value !== "object") return false;
+  const outcome = (value as { outcome?: unknown }).outcome;
+  return outcome === "approve" || outcome === "deny";
+}
+
+function describeMalformedResponse(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value !== "object") return typeof value;
+  const outcome = (value as { outcome?: unknown }).outcome;
+  return `outcome=${JSON.stringify(outcome) ?? String(outcome)}`;
+}
+
 export function approvalRequiredByForDecision(decision: PolicyDecision): NonNullable<PolicyDecision["approvalRequiredBy"]> {
   if (decision.winningRuleId) return "rule";
   return "mode";
@@ -123,12 +161,24 @@ export async function requestApprovalDecision(input: {
       };
     }
 
+    if (!isApprovalResponse(raced)) {
+      abortController.abort();
+      return {
+        packetId: input.packet.packetId,
+        toolCallId: input.packet.toolCallId,
+        outcome: "deny",
+        actor: "system",
+        reason: `approval requester returned a malformed response: ${describeMalformedResponse(raced)}`,
+        decidedAt: decidedAt(),
+      };
+    }
+
     return {
       packetId: input.packet.packetId,
       toolCallId: input.packet.toolCallId,
       outcome: raced.outcome,
-      actor: raced.actor ?? "human",
-      reason: raced.reason,
+      actor: typeof raced.actor === "string" ? raced.actor : "human",
+      reason: typeof raced.reason === "string" ? raced.reason : undefined,
       decidedAt: decidedAt(),
     };
   } finally {
