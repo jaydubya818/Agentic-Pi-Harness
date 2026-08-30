@@ -7,6 +7,27 @@ import { PiHarnessError } from "../errors.js";
  * Two policy logs are decision-equivalent iff, for every toolCallId, both
  * runs reached the same `result` via the same `winningRuleId`.
  * Evaluation order and timestamps are ignored; provenanceMode must match.
+ *
+ * Scope limit, stated because the comparison reads stronger than it is: the
+ * unit of comparison is the *toolCallId*, not the record. `load` folds each
+ * log into a `Map` keyed by `toolCallId`, so when a log carries more than one
+ * decision for the same id only the last survives, and the two record counts
+ * are never compared. A replay that dropped a whole policy decision therefore
+ * comes back `ok: true` with empty `missing` and `extra`.
+ *
+ * Reachable rather than theoretical: nothing dedupes tool-call ids. Every
+ * `tool_use` event is pushed onto `pendingToolUses` in `src/loop/query.ts` and
+ * each one gets its own `appendPolicyDecision`, so a model (or a replayed
+ * tape) that emits the same `id` twice writes two records that this function
+ * collapses into one. Reproduced: a recorded log of two decisions both under
+ * `t1` against a replayed log holding only the second gives
+ * `ok: true, missing: [], extra: []`.
+ *
+ * Same shape as the `postSet` fold documented on `diffEffectLogs`
+ * (`src/replay/levelB.ts`), and left as-is for the same reason: keying by
+ * `(recordIndex, toolCallId)` — or comparing record counts — makes Level C
+ * assert a stronger replay contract than `docs/REPLAY-MODEL.md` specifies.
+ * That is a contract decision, not a repair; see `docs/NIGHTLY-BACKLOG.md`.
  */
 
 export interface DecisionDrift {
