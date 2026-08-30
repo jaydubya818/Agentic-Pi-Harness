@@ -194,6 +194,52 @@ describe("approval runtime", () => {
     expect(decision.reason).toContain("sync approval crash");
   });
 
+  it("fails closed to deny when the requester resolves with something that is not an ApprovalResponse", async () => {
+    const packet = createApprovalPacket({ sessionId: "s1", decision: askDecision(), toolName: "write_file", timeoutMs: 50, requestedAt: "2026-04-10T00:00:01Z" });
+
+    // `undefined` and `null` previously threw a TypeError out of
+    // requestApprovalDecision, which prepareToolDispatch does not guard, so a
+    // requester that returned nothing aborted the run instead of denying the
+    // call. The remaining shapes resolved with `outcome: undefined` — outside
+    // the declared union, persisted as the approval evidence, and used to
+    // build the `approval.<outcome>` counter key.
+    const malformed: Array<[string, unknown]> = [
+      ["undefined", undefined],
+      ["null", null],
+      ["bare string", "approve"],
+      ["object without outcome", {}],
+      ["unrecognised outcome", { outcome: "maybe" }],
+    ];
+
+    for (const [label, response] of malformed) {
+      const decision = await requestApprovalDecision({
+        packet,
+        requester: { request: async () => response as never },
+        timeoutMs: 50,
+        decidedAt: () => "2026-04-10T00:00:09Z",
+      });
+
+      expect(decision.outcome, label).toBe("deny");
+      expect(decision.actor, label).toBe("system");
+      expect(decision.reason, label).toContain("malformed response");
+    }
+  });
+
+  it("normalizes a non-string actor and reason instead of writing them into the decision", async () => {
+    const packet = createApprovalPacket({ sessionId: "s1", decision: askDecision(), toolName: "write_file", timeoutMs: 50, requestedAt: "2026-04-10T00:00:01Z" });
+
+    const decision = await requestApprovalDecision({
+      packet,
+      requester: { request: async () => ({ outcome: "approve", actor: 42, reason: { note: "x" } }) as never },
+      timeoutMs: 50,
+      decidedAt: () => "2026-04-10T00:00:10Z",
+    });
+
+    expect(decision.outcome).toBe("approve");
+    expect(decision.actor).toBe("human");
+    expect(decision.reason).toBeUndefined();
+  });
+
   it("mediates ask decisions into final approve/deny outcomes", () => {
     const approved = applyApprovalDecision(askDecision(), {
       packetId: "t1:approval",
