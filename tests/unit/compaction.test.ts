@@ -74,6 +74,42 @@ describe("compaction helpers", () => {
     expect(historyByteLength(first.events)).toBeLessThan(historyByteLength(events));
   });
 
+  it("does not claim a compaction that would grow the history", () => {
+    // Over budget because of the text_delta, not the tool results. Every
+    // tool_result body here is shorter than the fixed-size placeholder, so
+    // replacing them made the history *larger* while still reporting a
+    // compaction record and incrementing `compaction.applied` in the loop.
+    const events: StreamEvent[] = [];
+    for (let i = 0; i < 20; i++) {
+      events.push({ type: "tool_result", schemaVersion: 1, id: `c${i}`, output: "ok", isError: false });
+    }
+    events.push({ type: "text_delta", schemaVersion: 1, text: "x".repeat(4000) });
+
+    const result = compactHistory(events, { targetBytes: 1000 });
+
+    expect(compactToolResultOutput("c0", 2).length).toBeGreaterThan("ok".length);
+    expect(result.record).toBeNull();
+    expect(result.events).toBe(events);
+    expect(historyByteLength(result.events)).toBe(historyByteLength(events));
+  });
+
+  it("compacts only the bodies the placeholder is smaller than", () => {
+    const events: StreamEvent[] = [
+      { type: "tool_result", schemaVersion: 1, id: "small", output: "ok", isError: false },
+      { type: "tool_result", schemaVersion: 1, id: "large", output: "z".repeat(3000), isError: false },
+    ];
+
+    const result = compactHistory(events, { targetBytes: 500 });
+
+    expect(result.record?.compactedToolCallIds).toEqual(["large"]);
+    expect(result.record?.compactedEventIndexes).toEqual([1]);
+    expect((result.events[0] as Extract<StreamEvent, { type: "tool_result" }>).output).toBe("ok");
+    expect((result.events[1] as Extract<StreamEvent, { type: "tool_result" }>).output).toBe(
+      compactToolResultOutput("large", 3000),
+    );
+    expect(result.record!.bytesAfter).toBeLessThan(result.record!.bytesBefore);
+  });
+
   it("returns the original history unchanged when over budget but nothing is compactable", () => {
     const events: StreamEvent[] = [
       { type: "message_start", schemaVersion: 1 },
