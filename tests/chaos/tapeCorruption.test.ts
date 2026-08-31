@@ -78,4 +78,33 @@ describe("chaos: tape corruption is always detected", () => {
     const v = await verifyTape(p);
     expect(v.ok).toBe(false);
   });
+
+  // The boundary of the claim in this file's name. Everything above is a
+  // change to schema-covered content and is caught; this is the one class
+  // that is not, so it is pinned rather than left to be rediscovered.
+  it("does NOT detect an unknown key added to a record, by design", async () => {
+    const p = await freshTape();
+    const lines = (await readFile(p, "utf8")).split("\n").filter(Boolean);
+    const clean = await verifyTape(p);
+    expect(clean.ok).toBe(true);
+
+    const record = JSON.parse(lines[lines.length - 1]);
+    record.injectedKey = { arbitrary: "payload" };
+    lines[lines.length - 1] = JSON.stringify(record);
+    await writeFile(p, lines.join("\n") + "\n");
+
+    // `readTape` parses each line with `TapeRecordSchema`, and zod's default
+    // object behaviour is to strip unknown keys. The chain is then rehashed
+    // over the stripped object, so it reproduces the stored `recordHash`
+    // exactly and the tape verifies with an unchanged digest.
+    const v = await verifyTape(p);
+    expect(v.ok).toBe(true);
+    expect(v.digest).toBe(clean.digest);
+
+    // What this means: `verify` attests the schema-covered content of a tape,
+    // not its bytes. The injected key is stripped before replay ever sees it,
+    // so it cannot change replay behaviour — but an operator who reads
+    // docs/THREAT-MODEL.md ("tapes from other sources are untrusted until
+    // `verify` passes") must not conclude the *file* has been vetted.
+  });
 });
