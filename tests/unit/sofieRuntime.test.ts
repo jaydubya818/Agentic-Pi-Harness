@@ -201,3 +201,71 @@ describe("sofie runtime: a damaged effect log", () => {
     expect(answer.closureRecommendation).toBe("needs-human");
   });
 });
+
+// Characterization, not endorsement. `tryReadJson` in src/sofie/runtime.ts
+// returns null for a damaged checkpoint.json and for an absent one alike, so
+// the two are indistinguishable to buildSofieContextFromSession. These cases
+// pin that behaviour so the gap is a failing test the day someone closes it,
+// rather than a silent change. Tracked in docs/NIGHTLY-BACKLOG.md under the
+// 2026-08-22 evidence-reader item; deliberately not patched here because the
+// two sibling readers (policy log, effect log) were each fixed in their own
+// nightly and a third one-off would be the same fix a third time.
+describe("sofie runtime: a damaged checkpoint is indistinguishable from an absent one", () => {
+  let outRoot: string;
+
+  async function seed(sessionId: string, checkpointBytes: string | null) {
+    const sessionDir = join(outRoot, "sessions", sessionId);
+    await mkdir(sessionDir, { recursive: true });
+    await mkdir(join(outRoot, "effects"), { recursive: true });
+    // Effects and a decision are present, so the insufficient-evidence guard
+    // does not fire and mask what the checkpoint reader did.
+    await writeFile(join(outRoot, "effects", `${sessionId}.jsonl`), JSON.stringify(effectRecord()) + "\n");
+    await writeFile(join(sessionDir, "policy.jsonl"), JSON.stringify(policyDecision()) + "\n");
+    if (checkpointBytes !== null) await writeFile(join(sessionDir, "checkpoint.json"), checkpointBytes);
+  }
+
+  beforeAll(async () => {
+    outRoot = await mkdtemp(join(tmpdir(), "pi-sofie-ckpt-"));
+    await seed("ckpt-intact", JSON.stringify({ stopReason: "permission_denied" }));
+    // Same run, killed mid-write: a truncated JSON object with no closing brace.
+    await seed("ckpt-torn", '{"stopReason":"permission_den');
+    await seed("ckpt-absent", null);
+  });
+
+  afterAll(async () => {
+    await rm(outRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  it("escalates on a permission stopReason when the checkpoint is intact", async () => {
+    const answer = await answerSofieSessionQuestion({ sessionId: "ckpt-intact", outRoot }, "Is this run complete?", "closure");
+
+    expect(answer.verdict).toBe("escalate");
+    expect(answer.escalation.reason).toBe("credentials_or_permissions");
+    expect(answer.closureRecommendation).toBe("needs-human");
+  });
+
+  it("drops the stopReason finding entirely when the checkpoint is torn", async () => {
+    const context = await buildSofieContextFromSession({ sessionId: "ckpt-torn", outRoot }, "Is this run complete?", "closure");
+
+    // Note what is *not* here: no `checkpointUnparsed` finding, unlike the
+    // `policyLogUnparsedLines` / `effectLogUnparsedLines` the sibling readers
+    // now emit. The operator is given no signal that evidence was lost.
+    expect(context.frictionFindings).toEqual([]);
+  });
+
+  it("certifies the same run complete once the checkpoint is torn", async () => {
+    const answer = await answerSofieSessionQuestion({ sessionId: "ckpt-torn", outRoot }, "Is this run complete?", "closure");
+
+    // One damaged byte range turns escalate/needs-human into answer/complete.
+    expect(answer.verdict).toBe("answer");
+    expect(answer.escalation.escalate).toBe(false);
+    expect(answer.closureRecommendation).toBe("complete");
+  });
+
+  it("produces byte-identical findings for a torn checkpoint and no checkpoint", async () => {
+    const torn = await buildSofieContextFromSession({ sessionId: "ckpt-torn", outRoot }, "Is this run complete?", "closure");
+    const absent = await buildSofieContextFromSession({ sessionId: "ckpt-absent", outRoot }, "Is this run complete?", "closure");
+
+    expect(torn.frictionFindings).toEqual(absent.frictionFindings);
+  });
+});
