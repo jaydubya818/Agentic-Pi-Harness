@@ -19,6 +19,21 @@ Current Tier A persisted families are:
 
 Each schema lives in `src/schemas/<name>.ts` and is re-exported from `src/schemas/index.ts`.
 
+> **Where the rule does not hold today.** Three of the modules listed below are
+> declared but inert, so this section describes the intended surface rather
+> than the current one:
+>
+> | Module | State |
+> | --- | --- |
+> | `metricsSnapshot.ts` | `metrics.json` **is** written, but as the bare counter map — no `schemaVersion`, no validating reader. See family 7. |
+> | `sessionContext.ts` | No artifact of this shape is written or read anywhere. |
+> | `toolAuditRecord.ts` | No sidecar file is emitted; already noted under family 5. |
+>
+> `src/schemas/index.ts` re-exports all three, but `src/index.ts` — the package
+> entry named by `package.json#main` — exports only `hermes/index.js` and
+> `orchestration/hermesSupervisor.js`, so none of them reach a package
+> consumer either.
+
 ## Current schema modules under `src/schemas/`
 
 ### Core helpers
@@ -43,10 +58,10 @@ Each schema lives in `src/schemas/<name>.ts` and is re-exported from `src/schema
 > unchanged.
 
 ### Session / provenance / checkpoint
-- `sessionContext.ts` — persisted session-level identity and runtime context shape
-- `provenanceManifest.ts` — session start manifest written for the canonical run
+- `sessionContext.ts` — **declared, not persisted.** No artifact of this shape is written or read; `SessionContextSchema` and `SESSION_CONTEXT_SCHEMA_VERSION` have no reference anywhere outside their own module. (The `session.json` files under a Hermes runtime dir are bridge session records written by `src/hermes/adapter.ts` and are a different shape entirely.)
+- `provenanceManifest.ts` — session start manifest written for the canonical run; validated on both write and read by `writeProvenance` / `readProvenance`
 - `checkpoint.ts` — crash-safe loop end state (`sessionId`, `turnIndex`, `messageCount`, `lastEventAt`, `stopReason`)
-- `metricsSnapshot.ts` — persisted counters snapshot written at session end
+- `metricsSnapshot.ts` — **declared, not persisted.** `metrics.json` is written as the bare counter map (`src/cli/run.ts`, `safeWriteCanonicalJson(..., result.counters)`), not as the `{ schemaVersion, sessionId, counters, capturedAt }` envelope this module defines. Nothing produces or consumes `SessionMetrics`.
 
 ### Replay tape / stream
 - `streamEvent.ts` — normalized canonical stream events used by the mock adapter and loop
@@ -67,10 +82,10 @@ Written during `run` for the canonical golden path:
 - `sessions/<sessionId>/metrics.json`
 
 Schema modules:
-- `provenanceManifest.ts`
-- `checkpoint.ts`
-- `metricsSnapshot.ts`
-- `sessionContext.ts`
+- `provenanceManifest.ts` — describes `provenance.json`
+- `checkpoint.ts` — describes `checkpoint.json`
+- `metricsSnapshot.ts` — does **not** describe `metrics.json`; see the module note above
+- `sessionContext.ts` — describes no artifact in this list; see the module note above
 
 ### 2) Replay tape
 Written to:
@@ -126,10 +141,19 @@ Schema module:
 - `streamEvent.ts`
 
 ### 7) Metrics snapshot
-A simple persisted counters snapshot is written at session end.
+A simple persisted counters snapshot is written at session end, to
+`sessions/<sessionId>/metrics.json`.
+
+It is written as the bare `counters` map — a flat `Record<string, number>` with
+no envelope — so unlike every other family in this list it carries **no
+`schemaVersion` field**, and no reader validates it. This is the one live
+exception to the rule at the top of this document.
 
 Schema module:
-- `metricsSnapshot.ts`
+- `metricsSnapshot.ts` — defines the envelope this artifact does *not* currently
+  use. Adopting it would change the bytes of `metrics.json` and therefore the
+  canonical golden digests, so it is a contract change rather than a cleanup.
+  Tracked in `docs/NIGHTLY-BACKLOG.md` (2026-08-23).
 
 ## Read path
 
