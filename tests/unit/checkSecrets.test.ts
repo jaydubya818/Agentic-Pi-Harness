@@ -34,6 +34,34 @@ describe("staged-secret guard (RISK-REGISTER R11)", () => {
     expect(scanContentForSecrets(`key = "AIza${"a".repeat(35)}"`)).toContain("google api key");
   });
 
+  it("flags the keystore extensions and npm credentials file the path pass claims", () => {
+    // `.pem` and `.key` were the only two of the six keystore extensions with
+    // a case; a typo in the alternation would have silently disabled the rest.
+    expect(classifyStagedPath("ops/client.p12")).toMatch(/private key/);
+    expect(classifyStagedPath("ops/client.pfx")).toMatch(/private key/);
+    expect(classifyStagedPath("ops/truststore.jks")).toMatch(/private key/);
+    expect(classifyStagedPath("ops/release.keystore")).toMatch(/private key/);
+    // The extension test is case-insensitive.
+    expect(classifyStagedPath("ops/Client.PEM")).toMatch(/private key/);
+    expect(classifyStagedPath(".npmrc")).toMatch(/npm credentials/);
+    expect(classifyStagedPath("packages/app/.npmrc")).toMatch(/npm credentials/);
+    // Ambient type declarations are allowlisted, not credential material.
+    expect(classifyStagedPath("src/types/.env.d.ts")).toBeNull();
+  });
+
+  it("flags the fine-grained PAT, Slack, and model-provider formats the content pass claims", () => {
+    // These three patterns had no case at all. Each is a self-identifying
+    // prefix the guard promises to catch, so a broken quantifier here is an
+    // unnoticed hole rather than a failing test.
+    expect(scanContentForSecrets(`pat = "github_pat_${"A".repeat(60)}"`)).toContain("github fine-grained pat");
+    for (const prefix of ["xoxb-", "xoxa-", "xoxp-", "xoxr-", "xoxs-"]) {
+      expect(scanContentForSecrets(`slack: "${prefix}${"1".repeat(12)}"`)).toContain("slack token");
+    }
+    expect(scanContentForSecrets(`key = "sk-${"a".repeat(24)}"`)).toContain("model provider api key");
+    expect(scanContentForSecrets(`key = "sk-proj-${"a".repeat(24)}"`)).toContain("model provider api key");
+    expect(scanContentForSecrets(`key = "sk-ant-${"a".repeat(24)}"`)).toContain("model provider api key");
+  });
+
   it("exempts its own source and test from the content pass", () => {
     // Both files carry every pattern by construction; without the exemption
     // the guard refused any commit that touched them.
