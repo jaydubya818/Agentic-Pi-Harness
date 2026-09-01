@@ -223,6 +223,28 @@ Rule:
 
 This release uses that guard as a documentation-alignment check for the Tier A contract.
 
+What it is and is not, so a reader does not over-read it (behaviour pinned in
+`tests/unit/checkSchemaDrift.test.ts`):
+
+- It reads `git diff --cached`, so it fires per commit, from
+  `.husky/pre-commit`. There is **no CI step** for it in
+  `.github/workflows/ci.yml` — `git commit --no-verify`, a clone where
+  `prepare` never installed the hook, and an edit made through the GitHub web
+  UI all reach `main` without it running. Same delivery-path limit as the
+  staged-secret guard; see `docs/RISK-REGISTER.md` R11.
+- It is content-blind. Any staged edit to this file satisfies it, including
+  one unrelated to the schema change. It forces the two files to move
+  together; it does not check that they agree.
+- It watches `src/schemas/**/*.ts` only. A non-TypeScript file added under
+  that directory, and every Zod schema defined outside it — `contractV2.ts`,
+  `contracts.ts`, `policy/engine.ts`, `hooks/dispatcher.ts` — are outside its
+  scope. That matches this document's stated scope (Tier A persisted families
+  only), but it means "the guard passed" is not "every schema in the repo is
+  documented".
+- A staged *deletion* under `src/schemas/` counts as a change, which is the
+  case most likely to leave this file describing something that no longer
+  exists.
+
 ## Sofie phase note
 - Re-exported Sofie authority types from `src/schemas/index.ts`.
 - No persisted artifact outer shape changed.
