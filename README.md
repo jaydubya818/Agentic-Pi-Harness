@@ -115,6 +115,21 @@ npm run build
 node dist/cli/index.js run ./.pi-work ./.pi-out
 ```
 
+Install notes:
+
+- **Install scripts (npm 11.16+ / v12):** `node-pty` compiles a native addon in
+  its install script and has no Linux prebuild. Recent npm blocks install
+  scripts by default (`npm warn allow-scripts ... node-pty`), which leaves
+  `node-pty` without its `pty.node` binary and the PTY transport fails at
+  import time. Nothing on the tested path (`typecheck`, `test`, `lint`,
+  `build`, `golden:verify`) needs the compiled pty, so a blocked script is
+  fine for development; approve it (`npm approve-scripts node-pty`, or your
+  npm version's equivalent) only when you need the PTY transport.
+- **`NODE_ENV=production`:** npm treats it as `--omit=dev`, so `npm ci` in a
+  shell that exports it installs the two runtime dependencies and none of the
+  toolchain, and every script above then fails with a missing binary. Run
+  `unset NODE_ENV` (or `NODE_ENV=development npm ci`) first.
+
 Verify the resulting tape:
 
 ```bash
