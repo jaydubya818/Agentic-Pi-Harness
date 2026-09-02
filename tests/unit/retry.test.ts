@@ -78,4 +78,47 @@ describe("retry helpers", () => {
     cyclic.cause = cyclic;
     expect(classifyRetryableModelError(cyclic, { hasPersistedEvent: false })).toBe("model_open_fail_closed");
   });
+
+  it("stops walking the cause chain after MAX_CAUSE_DEPTH wrappers", () => {
+    // Depth is counted from the outer error: it plus four `cause` hops are
+    // read, the fifth is not. A transport code five wrappers down therefore
+    // fails closed instead of retrying.
+    function wrap(inner: unknown, layers: number): Error {
+      let current: Error = inner as Error;
+      for (let i = 0; i < layers; i++) current = new Error(`layer ${i}`, { cause: current });
+      return current;
+    }
+    expect(normalizeRetryError(wrap(transientError("ECONNRESET"), 4)).code).toBe("ECONNRESET");
+    expect(classifyRetryableModelError(wrap(transientError("ECONNRESET"), 4), { hasPersistedEvent: false })).toBe("model_open_transient");
+    expect(normalizeRetryError(wrap(transientError("ECONNRESET"), 5)).code).toBeNull();
+    expect(classifyRetryableModelError(wrap(transientError("ECONNRESET"), 5), { hasPersistedEvent: false })).toBe("model_open_fail_closed");
+  });
+
+  it("keeps the outermost value of each field and fills only the missing ones from causes", () => {
+    const outer = { code: "E_OUTER", cause: { code: "ECONNRESET", name: "SocketError", status: 503 } };
+    expect(normalizeRetryError(outer)).toEqual({ code: "E_OUTER", name: "SocketError", status: 503 });
+    // The outer code wins even though the cause carried a retryable one;
+    // the cause's status still makes the whole error transient.
+    expect(classifyRetryableModelError(outer, { hasPersistedEvent: false })).toBe("model_open_transient");
+    expect(classifyRetryableModelError({ code: "E_OUTER", cause: { code: "ECONNRESET" } }, { hasPersistedEvent: false }))
+      .toBe("model_open_fail_closed");
+  });
+
+  it("ignores non-string codes and non-numeric statuses, and matches the allowlist by name too", () => {
+    expect(normalizeRetryError({ code: 42, status: "503", name: ["x"] })).toEqual({ code: null, name: null, status: null });
+    expect(normalizeRetryError("ECONNRESET")).toEqual({ code: null, name: null, status: null });
+    expect(classifyRetryableModelError({ name: "ETIMEDOUT" }, { hasPersistedEvent: false })).toBe("model_open_transient");
+    // Only the transport allowlist is consulted for `name`; a generic Error
+    // name does not qualify.
+    expect(classifyRetryableModelError(new Error("ECONNRESET"), { hasPersistedEvent: false })).toBe("model_open_fail_closed");
+  });
+
+  it("rejects a non-positive attempt index instead of computing a delay from it", () => {
+    expect(() => computeRetryDelayMs(0, 10, 25)).toThrow(PiHarnessError);
+    expect(() => computeRetryDelayMs(-1, 10, 25)).toThrow(/attemptIndex must be >= 1/);
+    // An E_MODEL_ADAPTER error is a PiHarnessError, so it is never treated
+    // as transient regardless of its own `retryable` default.
+    expect(classifyRetryableModelError(new PiHarnessError("E_MODEL_ADAPTER", "adapter"), { hasPersistedEvent: false }))
+      .toBe("model_open_fail_closed");
+  });
 });
