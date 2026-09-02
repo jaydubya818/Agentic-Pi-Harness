@@ -9,6 +9,11 @@ export interface WorkerModeControls {
   allowedWritePathPrefixes?: string[];
   maxWritePaths?: number;
   allowExclusiveTools?: boolean;
+  /**
+   * Reserved: no subagent spawn path exists in the loop yet, so
+   * `validateWorkerModeInputs` refuses a worker session that sets either
+   * field rather than accept a control nothing enforces.
+   */
   allowSubagents?: boolean;
   maxSubagents?: number;
 }
@@ -66,6 +71,18 @@ export function validateWorkerModeInputs(input: {
   }
   if (input.approvalRequesterConfigured) {
     throw new PiHarnessError("E_TOOL_FORBIDDEN", "worker mode disallows interactive approval requesters", {}, { retryable: false });
+  }
+  // Nothing in the loop spawns subagents, so there is no site at which
+  // these two controls could be enforced. Accepting them would let an
+  // operator believe a cap is in force that nothing reads; refuse the
+  // session instead, so wiring subagent spawning has to wire these too.
+  if (input.workerControls.allowSubagents !== undefined || input.workerControls.maxSubagents !== undefined) {
+    throw new PiHarnessError(
+      "E_TOOL_FORBIDDEN",
+      "worker mode cannot honour allowSubagents/maxSubagents: the loop has no subagent spawn path, so the control would be accepted but never enforced; unset it",
+      { allowSubagents: input.workerControls.allowSubagents, maxSubagents: input.workerControls.maxSubagents },
+      { retryable: false },
+    );
   }
 }
 
