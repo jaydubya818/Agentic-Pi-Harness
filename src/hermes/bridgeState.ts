@@ -25,6 +25,15 @@ export type BridgeEventRecord = HermesTaskEvent | PiHermesStructuredEventV2;
 
 export interface BridgeStateRunRecord {
   accepted: HermesTaskAccepted;
+  /**
+   * When the bridge accepted this run, stamped once at acceptance and never
+   * rewritten. `HermesTaskAccepted` carries no timestamp of its own, so
+   * without this a restored run has no acceptance time at all and `loadRuns`
+   * can only order by the owning session's `created_at` — a proxy that ties
+   * for every run on one session. Optional because run records persisted
+   * before this field existed do not have it; see `loadRuns`.
+   */
+  acceptedAt?: string;
   request: HermesTaskRequest;
   status: HermesTaskResult["status"];
   state?: string;
@@ -39,6 +48,8 @@ export interface BridgeStateRunRecord {
 
 interface PersistedBridgeRunRecord {
   accepted: HermesTaskAccepted;
+  /** Snake-case on disk to match every other persisted field. */
+  accepted_at?: string | null;
   request: HermesTaskRequest;
   status: HermesTaskResult["status"];
   state?: string;
@@ -201,15 +212,21 @@ export class HermesBridgeStateStore {
         // skip invalid persisted run state
       }
     }
-    // Same `readdir` problem as loadSessions. A run record carries no
-    // acceptance timestamp of its own, so true acceptance order cannot be
-    // recovered from disk; the best available proxy is the owning session's
-    // created_at, with execution_id as a total tie-break. That is not
-    // guaranteed to be acceptance order for two runs on one session, but it
-    // is at least identical on every host and across every restart, which
-    // arbitrary readdir order was not.
+    // Same `readdir` problem as loadSessions. Runs persisted with an
+    // `accepted_at` order by it, which is true acceptance order including for
+    // two runs sharing one session — the case the session-created_at proxy
+    // could never separate.
+    //
+    // Records written before `accepted_at` existed fall back to the owning
+    // session's created_at, which is the ordering they already had. Mixing
+    // the two keys is coherent rather than arbitrary: both are ISO-8601 UTC
+    // strings and a run is always accepted at or after its session was
+    // created, so a legacy run sorts no later than it did before. Ordering
+    // between two runs is only sharpened, never inverted, by adding the
+    // field. `execution_id` remains the total tie-break so the result is
+    // identical on every host and across every restart.
     return runs.sort((a, b) =>
-      compareCodeUnits(a.session.created_at, b.session.created_at)
+      compareCodeUnits(runOrderKey(a), runOrderKey(b))
       || compareCodeUnits(a.accepted.execution_id, b.accepted.execution_id));
   }
 
@@ -313,9 +330,29 @@ async function readTailLines(path: string, minLines: number): Promise<string> {
   }
 }
 
+/**
+ * Primary sort key for restored runs: true acceptance time when the record
+ * has one, the owning session's creation time for records written before
+ * `accepted_at` existed.
+ *
+ * Both are normalized to the canonical `…T…:…:….sssZ` form first. The two
+ * fields are produced by different call sites and a lexicographic compare of
+ * ISO strings that disagree on sub-second precision is wrong, not merely
+ * arbitrary: `"2026-08-02T00:00:00Z"` sorts *after* `"2026-08-02T00:00:00.500Z"`
+ * because `"Z"` > `"."` in code-unit order, inverting two instants that are
+ * half a second apart. An unparseable stamp falls back to its raw text, which
+ * is still deterministic across hosts and restarts.
+ */
+function runOrderKey(record: BridgeStateRunRecord): string {
+  const raw = record.acceptedAt ?? record.session.created_at;
+  const ms = Date.parse(raw);
+  return Number.isNaN(ms) ? raw : new Date(ms).toISOString();
+}
+
 function serializeRun(record: BridgeStateRunRecord): PersistedBridgeRunRecord {
   return {
     accepted: HermesTaskAcceptedSchema.parse(record.accepted),
+    accepted_at: record.acceptedAt ?? null,
     request: HermesTaskRequestSchema.parse(record.request),
     status: record.status,
     state: record.state,
@@ -331,6 +368,7 @@ function serializeRun(record: BridgeStateRunRecord): PersistedBridgeRunRecord {
 function parsePersistedRun(record: PersistedBridgeRunRecord): Omit<BridgeStateRunRecord, "events"> {
   return {
     accepted: HermesTaskAcceptedSchema.parse(record.accepted),
+    acceptedAt: record.accepted_at ?? undefined,
     request: HermesTaskRequestSchema.parse(record.request),
     status: record.status,
     state: record.state,
