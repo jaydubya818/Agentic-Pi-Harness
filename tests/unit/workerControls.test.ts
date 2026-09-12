@@ -23,6 +23,32 @@ describe("worker controls", () => {
     })).not.toThrow();
   });
 
+  it("refuses a worker session that sets the subagent controls nothing enforces", () => {
+    // Regression: both fields were accepted and silently ignored, so an
+    // operator setting a cap got neither an error nor an effect.
+    for (const workerControls of [
+      { signedPolicy: true, allowSubagents: true },
+      { signedPolicy: true, allowSubagents: false },
+      { signedPolicy: true, maxSubagents: 0 },
+      { signedPolicy: true, maxSubagents: 4 },
+    ]) {
+      expect(() => validateWorkerModeInputs({ mode: "worker", workerControls, approvalRequesterConfigured: false }))
+        .toThrow(expect.objectContaining({ code: "E_TOOL_FORBIDDEN", message: expect.stringMatching(/allowSubagents\/maxSubagents/) }));
+    }
+
+    // Unset is the only honoured spelling, and non-worker modes never consult worker controls.
+    expect(() => validateWorkerModeInputs({
+      mode: "worker",
+      workerControls: { signedPolicy: true },
+      approvalRequesterConfigured: false,
+    })).not.toThrow();
+    expect(() => validateWorkerModeInputs({
+      mode: "autonomous",
+      workerControls: { signedPolicy: true, allowSubagents: true, maxSubagents: 2 },
+      approvalRequesterConfigured: false,
+    })).not.toThrow();
+  });
+
   it("denies prefix-bypass writes via traversal and sibling directories", () => {
     const controls = { signedPolicy: true, allowedWritePathPrefixes: ["sandbox/"] };
     const evaluate = (path: string) => evaluateWorkerToolUse({
