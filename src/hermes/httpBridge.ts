@@ -534,10 +534,11 @@ export class HermesBridgeServer {
       // small on a long-lived bridge; ?limit=N tails the most recent.
       const limit = parseLimitParam(url);
       // Map insertion order is acceptance order for runs this process
-      // accepted. Restored runs come first, ordered by their session's
-      // created_at then execution_id -- a persisted run carries no
-      // acceptance timestamp, so that is a stable proxy, not true
-      // acceptance order, for two runs sharing one session.
+      // accepted. Restored runs come first, ordered by their persisted
+      // `accepted_at` then execution_id -- true acceptance order, including
+      // for two runs sharing one session. Runs persisted before that field
+      // existed still fall back to their session's created_at; those are the
+      // records whose `accepted_at` reads null in the response.
       const items = Array.from(this.runs.values()).map((run) => serializeRunSummary(run));
       json(res, 200, {
         count: items.length,
@@ -642,6 +643,7 @@ export class HermesBridgeServer {
     try {
       const record: HermesBridgeRunRecord = {
         accepted,
+        acceptedAt: new Date().toISOString(),
         request: parsedLegacyRequest(request),
         status: "accepted",
         session,
@@ -693,6 +695,7 @@ export class HermesBridgeServer {
     try {
       const record: HermesBridgeRunRecord = {
         accepted,
+        acceptedAt: new Date().toISOString(),
         request: legacyRequest,
         status: "accepted",
         state: "accepted",
@@ -1426,6 +1429,7 @@ function serializeRun(run: HermesBridgeRunRecord): Record<string, unknown> {
     execution_id: run.accepted.execution_id,
     request_id: run.accepted.request_id,
     session_id: run.accepted.session_id,
+    accepted_at: run.acceptedAt ?? null,
     mission_id: run.v2Task?.mission_id ?? run.request.metadata?.mission_id ?? null,
     run_id: run.v2Task?.run_id ?? run.request.metadata?.run_id ?? null,
     status: run.status,
@@ -1454,6 +1458,9 @@ function serializeRunSummary(run: HermesBridgeRunRecord): Record<string, unknown
     execution_id: run.accepted.execution_id,
     request_id: run.accepted.request_id,
     session_id: run.accepted.session_id,
+    // `null` for runs restored from state written before the field existed;
+    // those are also the runs GET /runs can only order by a proxy.
+    accepted_at: run.acceptedAt ?? null,
     mission_id: run.v2Task?.mission_id ?? run.request.metadata?.mission_id ?? null,
     run_id: run.v2Task?.run_id ?? run.request.metadata?.run_id ?? null,
     run_kind: run.v2Task ? "contract_v2" : "legacy",
