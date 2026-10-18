@@ -13,13 +13,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
-      - run: npm ci || npm install
+      - run: npm ci
       - run: npx tsc --noEmit
       - run: npx vitest run
       - name: npm audit (high+ only)
-        run: npm audit --audit-level=high || exit 1
+        run: npm audit --audit-level=high
 
   golden-proof:
     runs-on: ubuntu-latest
@@ -28,9 +28,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
-      - run: npm ci || npm install
+      - run: npm ci
       - name: verify committed golden tape
         run: npx tsx src/cli/verify.ts ./goldens/canonical/tape.jsonl
       - name: replay committed golden tape
